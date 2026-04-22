@@ -16,6 +16,9 @@ import {
   LogOut,
   Menu,
   ChevronDown,
+  Upload,
+  Package,
+  Terminal,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -29,6 +32,9 @@ const navigation = [
   { name: 'Locations', href: '/dashboard/locations', icon: MapPin },
   { name: 'Team', href: '/dashboard/team', icon: Users },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+  { name: 'Products', href: '/dashboard/products', icon: Package },
+  { name: 'Data Import', href: '/dashboard/imports', icon: Upload },
+  { name: 'Command Center', href: '/dashboard/os', icon: Terminal },
 ];
 
 export function DashboardShell({ children }: DashboardShellProps) {

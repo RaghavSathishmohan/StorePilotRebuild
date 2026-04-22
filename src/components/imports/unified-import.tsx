@@ -1,94 +1,79 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useStore, parseCSV, suggestColumnMapping, ImportType, ParsedCSV, ColumnMapping, ImportValidationError } from '@/lib/store'
-import { FileUp, Download, AlertCircle, CheckCircle, X, ChevronRight, Table2, BarChart3, Package, Receipt, Upload } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { FileUpload } from './file-upload'
+import { parseCSV, suggestColumnMapping, previewImport, createImport, processImport } from '@/app/actions/imports'
+import { CheckCircle, AlertCircle, X, ChevronRight, Download, Loader2 } from 'lucide-react'
 
-interface ImportStats {
-  productsAdded: number
-  productsUpdated: number
-  salesAdded: number
-  errors: ImportValidationError[]
+const AVAILABLE_FIELDS = [
+  { value: 'sku', label: 'SKU' },
+  { value: 'name', label: 'Product Name' },
+  { value: 'description', label: 'Description' },
+  { value: 'category', label: 'Category' },
+  { value: 'barcode', label: 'Barcode' },
+  { value: 'selling_price', label: 'Selling Price' },
+  { value: 'cost_price', label: 'Cost Price' },
+  { value: 'tax_rate', label: 'Tax Rate' },
+  { value: 'stock', label: 'Stock' },
+  { value: 'min_stock_level', label: 'Min Stock Level' },
+  { value: 'max_stock_level', label: 'Max Stock Level' },
+  { value: 'reorder_point', label: 'Reorder Point' },
+  { value: 'reorder_quantity', label: 'Reorder Quantity' },
+  { value: 'unit_of_measure', label: 'Unit of Measure' },
+  { value: 'supplier_name', label: 'Supplier Name' },
+  { value: 'supplier_contact', label: 'Supplier Contact' },
+  { value: 'is_active', label: 'Is Active' },
+  { value: 'receipt_number', label: 'Receipt Number' },
+  { value: 'transaction_date', label: 'Transaction Date' },
+  { value: 'location_name', label: 'Location Name' },
+  { value: 'quantity', label: 'Quantity' },
+  { value: 'unit_price', label: 'Unit Price' },
+  { value: 'discount_amount', label: 'Discount Amount' },
+  { value: 'tax_amount', label: 'Tax Amount' },
+  { value: 'payment_method', label: 'Payment Method' },
+  { value: 'customer_name', label: 'Customer Name' },
+  { value: 'customer_email', label: 'Customer Email' },
+  { value: 'customer_phone', label: 'Customer Phone' },
+  { value: 'cashier_name', label: 'Cashier Name' },
+  { value: 'notes', label: 'Notes' },
+]
+
+interface UnifiedImportProps {
+  storeId: string
 }
 
-export function UnifiedImport() {
+export function UnifiedImport({ storeId }: UnifiedImportProps) {
   const [activeTab, setActiveTab] = useState('upload')
-  const [csvContent, setCsvContent] = useState('')
   const [fileName, setFileName] = useState('')
-  const [parsedCSV, setParsedCSV] = useState<ParsedCSV | null>(null)
-  const [columnMapping, setColumnMapping] = useState<ColumnMapping[]>([])
-  const [importType, setImportType] = useState<ImportType>('unified')
-  const [previewData, setPreviewData] = useState<ImportStats | null>(null)
+  const [parsedCSV, setParsedCSV] = useState<{ headers: string[]; rows: Record<string, string>[]; totalRows: number } | null>(null)
+  const [columnMapping, setColumnMapping] = useState<{ csvColumn: string; dbField: string; confidence?: string }[]>([])
+  const [previewData, setPreviewData] = useState<any>(null)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [showErrorDialog, setShowErrorDialog] = useState(false)
-  const [showPreviewDialog, setShowPreviewDialog] = useState(false)
-  const [dragActive, setDragActive] = useState(false)
+  const [showResultDialog, setShowResultDialog] = useState(false)
+  const [importResult, setImportResult] = useState<any>(null)
 
-  const store = useStore()
-  const analytics = store.getAnalytics()
+  const handleFileSelect = async (file: File, content: string) => {
+    setFileName(file.name)
+    try {
+      const parsed = await parseCSV(content)
+      setParsedCSV(parsed)
 
-  const handleDrag = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true)
-    } else if (e.type === 'dragleave') {
-      setDragActive(false)
+      // Auto-suggest column mapping
+      const mapping = await suggestColumnMapping(parsed.headers, 'unified')
+      setColumnMapping(mapping)
+
+      setActiveTab('mapping')
+    } catch (error) {
+      alert('Error parsing CSV: ' + (error as Error).message)
     }
-  }, [])
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setDragActive(false)
-
-    const files = e.dataTransfer.files
-    if (files?.[0]) {
-      handleFile(files[0])
-    }
-  }, [])
-
-  const handleFile = (file: File) => {
-    if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
-      alert('Please upload a CSV file')
-      return
-    }
-
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const content = e.target?.result as string
-      setCsvContent(content)
-      setFileName(file.name)
-
-      try {
-        const parsed = parseCSV(content)
-        setParsedCSV(parsed)
-
-        // Auto-suggest column mapping
-        const mapping = suggestColumnMapping(parsed.headers)
-        setColumnMapping(mapping)
-
-        setActiveTab('mapping')
-      } catch (error) {
-        alert('Error parsing CSV: ' + (error as Error).message)
-      }
-    }
-    reader.readAsText(file)
-  }
-
-  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) handleFile(file)
   }
 
   const handleMappingChange = (csvColumn: string, dbField: string) => {
@@ -105,18 +90,38 @@ export function UnifiedImport() {
     setColumnMapping((prev) => prev.filter((m) => m.csvColumn !== csvColumn))
   }
 
-  const processImport = () => {
+  const handlePreview = async () => {
     if (!parsedCSV) return
 
     setIsProcessing(true)
-
-    // Simulate processing delay
-    setTimeout(() => {
-      const result = store.importUnified(parsedCSV.rows, columnMapping)
+    try {
+      const result = await previewImport(parsedCSV, 'unified', columnMapping, storeId)
       setPreviewData(result)
+      setActiveTab('preview')
+    } catch (error) {
+      alert('Error previewing import: ' + (error as Error).message)
+    } finally {
       setIsProcessing(false)
-      setShowPreviewDialog(true)
-    }, 500)
+    }
+  }
+
+  const handleImport = async () => {
+    if (!parsedCSV) return
+
+    setIsProcessing(true)
+    try {
+      // Create import record
+      const { id: importId } = await createImport(storeId, 'unified', fileName, '', columnMapping)
+
+      // Process import
+      const result = await processImport(importId, parsedCSV, 'unified', columnMapping, storeId)
+      setImportResult(result)
+      setShowResultDialog(true)
+    } catch (error) {
+      alert('Error processing import: ' + (error as Error).message)
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   const downloadTemplate = () => {
@@ -128,14 +133,12 @@ export function UnifiedImport() {
       'payment_method', 'customer_name', 'customer_email', 'customer_phone', 'cashier_name', 'notes'
     ]
 
-    // Sample product row
     const productRow = [
-      'PROD-001', 'Sample Product', 'A sample product description', 'Category A', '123456789012',
+      'PROD-001', 'Sample Product', 'A sample product', 'Category A', '123456789012',
       '19.99', '12.00', '8.25', '100', '10', '500', '25', '50', 'each', 'Supplier Co',
       'contact@supplier.com', 'true', '', '', '', '', '', '', '', '', '', '', '', '', ''
     ]
 
-    // Sample sales row
     const salesRow = [
       'PROD-001', 'Sample Product', '', '', '', '', '', '', '', '', '', '', '', '', '', '',
       'true', 'RCP-20250325-001', '2025-03-25 14:30:00', 'Main Floor', '2', '19.99', '0.00',
@@ -159,167 +162,39 @@ export function UnifiedImport() {
   }
 
   const reset = () => {
-    setCsvContent('')
     setFileName('')
     setParsedCSV(null)
     setColumnMapping([])
     setPreviewData(null)
+    setImportResult(null)
     setActiveTab('upload')
   }
 
-  // Get unmapped CSV columns
+  // Get unmapped columns
   const unmappedColumns = parsedCSV?.headers.filter(
     (h) => !columnMapping.some((m) => m.csvColumn === h)
   ) || []
 
-  // Get available database fields
-  const availableFields = [
-    { value: 'sku', label: 'SKU' },
-    { value: 'name', label: 'Product Name' },
-    { value: 'description', label: 'Description' },
-    { value: 'category', label: 'Category' },
-    { value: 'barcode', label: 'Barcode' },
-    { value: 'sellingPrice', label: 'Selling Price' },
-    { value: 'costPrice', label: 'Cost Price' },
-    { value: 'taxRate', label: 'Tax Rate' },
-    { value: 'stock', label: 'Stock' },
-    { value: 'minStockLevel', label: 'Min Stock Level' },
-    { value: 'maxStockLevel', label: 'Max Stock Level' },
-    { value: 'reorderPoint', label: 'Reorder Point' },
-    { value: 'reorderQuantity', label: 'Reorder Quantity' },
-    { value: 'unitOfMeasure', label: 'Unit of Measure' },
-    { value: 'supplierName', label: 'Supplier Name' },
-    { value: 'supplierContact', label: 'Supplier Contact' },
-    { value: 'isActive', label: 'Is Active' },
-    { value: 'receiptNumber', label: 'Receipt Number' },
-    { value: 'transactionDate', label: 'Transaction Date' },
-    { value: 'locationName', label: 'Location Name' },
-    { value: 'quantity', label: 'Quantity' },
-    { value: 'unitPrice', label: 'Unit Price' },
-    { value: 'discountAmount', label: 'Discount Amount' },
-    { value: 'taxAmount', label: 'Tax Amount' },
-    { value: 'paymentMethod', label: 'Payment Method' },
-    { value: 'customerName', label: 'Customer Name' },
-    { value: 'customerEmail', label: 'Customer Email' },
-    { value: 'customerPhone', label: 'Customer Phone' },
-    { value: 'cashierName', label: 'Cashier Name' },
-    { value: 'notes', label: 'Notes' },
-  ]
-
   return (
     <div className="space-y-6">
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Products</p>
-                <h3 className="text-2xl font-bold">{analytics.totalProducts}</h3>
-              </div>
-              <Package className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Sales</p>
-                <h3 className="text-2xl font-bold">{analytics.totalSales}</h3>
-              </div>
-              <Receipt className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Revenue</p>
-                <h3 className="text-2xl font-bold">${analytics.totalRevenue.toFixed(2)}</h3>
-              </div>
-              <BarChart3 className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">Gross Margin</p>
-                <h3 className="text-2xl font-bold">{analytics.grossMargin.toFixed(1)}%</h3>
-              </div>
-              <Table2 className="h-8 w-8 text-muted-foreground" />
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Import Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="upload">1. Upload CSV</TabsTrigger>
           <TabsTrigger value="mapping" disabled={!parsedCSV}>2. Map Columns</TabsTrigger>
-          <TabsTrigger value="preview" disabled={columnMapping.length === 0}>3. Preview & Import</TabsTrigger>
+          <TabsTrigger value="preview" disabled={!previewData}>3. Preview & Import</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="upload">
+        <TabsContent value="upload" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5" />
-                Upload Unified CSV
-              </CardTitle>
+              <CardTitle>Upload Unified CSV</CardTitle>
               <CardDescription>
-                Upload your unified CSV file containing both product and sales data.
-                <br />
-                Rows without receipt_number are treated as products.
-                Rows with receipt_number are treated as sales.
+                Upload your CSV file containing both product and sales data.
+                Rows without receipt_number are products; rows with receipt_number are sales.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div
-                className={`
-                  border-2 border-dashed rounded-lg p-12 text-center transition-colors
-                  ${dragActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/25'}
-                  ${parsedCSV ? 'bg-green-50 border-green-300' : ''}
-                `}
-                onDragEnter={handleDrag}
-                onDragLeave={handleDrag}
-                onDragOver={handleDrag}
-                onDrop={handleDrop}
-              >
-                {parsedCSV ? (
-                  <div className="space-y-2">
-                    <CheckCircle className="h-12 w-12 text-green-500 mx-auto" />
-                    <p className="text-lg font-medium">{fileName}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {parsedCSV.totalRows} rows detected
-                    </p>
-                    <Button variant="outline" size="sm" onClick={() => setActiveTab('mapping')}>
-                      Continue to Mapping
-                      <ChevronRight className="ml-2 h-4 w-4" />
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    <FileUp className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <p className="text-lg font-medium mb-2">Drag & drop your CSV file</p>
-                    <p className="text-sm text-muted-foreground mb-4">or click to browse</p>
-                    <Input
-                      type="file"
-                      accept=".csv"
-                      onChange={handleFileInput}
-                      className="hidden"
-                      id="csv-upload"
-                    />
-                    <Button asChild variant="outline">
-                      <label htmlFor="csv-upload">Select File</label>
-                    </Button>
-                  </>
-                )}
-              </div>
+              <FileUpload onFileSelect={handleFileSelect} maxSize={100} />
 
               <div className="flex items-center justify-center gap-4">
                 <Separator className="flex-1" />
@@ -340,19 +215,18 @@ export function UnifiedImport() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="mapping">
+        <TabsContent value="mapping" className="mt-6">
           <Card>
             <CardHeader>
               <CardTitle>Map CSV Columns</CardTitle>
               <CardDescription>
                 Map your CSV columns to the corresponding fields.
-                <br />
-                Rows with a receipt_number will be treated as sales; rows without will be treated as products.
+                Rows with receipt_number = sales; rows without = products.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               {parsedCSV && (
-                <div className="space-y-4">
+                <>
                   <div className="bg-muted p-3 rounded-md">
                     <p className="text-sm font-medium">
                       Detected {parsedCSV.totalRows} rows with {parsedCSV.headers.length} columns
@@ -372,7 +246,6 @@ export function UnifiedImport() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {/* Mapped columns */}
                         {columnMapping.map((mapping) => (
                           <TableRow key={mapping.csvColumn}>
                             <TableCell className="font-mono text-sm">{mapping.csvColumn}</TableCell>
@@ -385,7 +258,7 @@ export function UnifiedImport() {
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {availableFields.map((f) => (
+                                  {AVAILABLE_FIELDS.map((f) => (
                                     <SelectItem key={f.value} value={f.value}>
                                       {f.label}
                                     </SelectItem>
@@ -394,18 +267,13 @@ export function UnifiedImport() {
                               </Select>
                             </TableCell>
                             <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => removeMapping(mapping.csvColumn)}
-                              >
+                              <Button variant="ghost" size="sm" onClick={() => removeMapping(mapping.csvColumn)}>
                                 <X className="h-4 w-4" />
                               </Button>
                             </TableCell>
                           </TableRow>
                         ))}
 
-                        {/* Unmapped columns */}
                         {unmappedColumns.map((col) => (
                           <TableRow key={col}>
                             <TableCell className="font-mono text-sm text-muted-foreground">{col}</TableCell>
@@ -415,7 +283,7 @@ export function UnifiedImport() {
                                   <SelectValue placeholder="Select field..." />
                                 </SelectTrigger>
                                 <SelectContent>
-                                  {availableFields.map((f) => (
+                                  {AVAILABLE_FIELDS.map((f) => (
                                     <SelectItem key={f.value} value={f.value}>
                                       {f.label}
                                     </SelectItem>
@@ -434,107 +302,128 @@ export function UnifiedImport() {
                     <Button variant="outline" onClick={() => setActiveTab('upload')}>
                       Back
                     </Button>
-                    <Button
-                      onClick={() => setActiveTab('preview')}
-                      disabled={columnMapping.length === 0}
-                    >
-                      Continue to Preview
+                    <Button onClick={handlePreview} disabled={isProcessing || columnMapping.length === 0}>
+                      {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Preview Import
                       <ChevronRight className="ml-2 h-4 w-4" />
                     </Button>
                   </div>
-                </div>
+                </>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="preview">
+        <TabsContent value="preview" className="mt-6">
           <Card>
             <CardHeader>
               <CardTitle>Preview & Import</CardTitle>
-              <CardDescription>
-                Review your mapping and import the data.
-              </CardDescription>
+              <CardDescription>Review validation results before importing.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setActiveTab('mapping')}>
-                  Back to Mapping
-                </Button>
-                <Button onClick={processImport} disabled={isProcessing}>
-                  {isProcessing ? 'Processing...' : 'Import Data'}
-                </Button>
-              </div>
+              {previewData && (
+                <>
+                  <div className="grid grid-cols-4 gap-4">
+                    <div className="bg-muted p-4 rounded-lg text-center">
+                      <p className="text-2xl font-bold">{previewData.totalRows}</p>
+                      <p className="text-xs text-muted-foreground">Total Rows</p>
+                    </div>
+                    <div className="bg-green-50 p-4 rounded-lg text-center">
+                      <p className="text-2xl font-bold text-green-600">{previewData.validRows}</p>
+                      <p className="text-xs text-green-700">Valid</p>
+                    </div>
+                    <div className="bg-red-50 p-4 rounded-lg text-center">
+                      <p className="text-2xl font-bold text-red-600">{previewData.invalidRows}</p>
+                      <p className="text-xs text-red-700">Invalid</p>
+                    </div>
+                    <div className="bg-blue-50 p-4 rounded-lg text-center">
+                      <p className="text-2xl font-bold text-blue-600">{previewData.previewRows}</p>
+                      <p className="text-xs text-blue-700">Previewed</p>
+                    </div>
+                  </div>
+
+                  {previewData.errors.length > 0 && (
+                    <div className="border rounded-md p-4 bg-red-50">
+                      <h4 className="font-medium flex items-center gap-2 mb-2">
+                        <AlertCircle className="h-4 w-4 text-red-500" />
+                        Errors ({previewData.errors.length})
+                      </h4>
+                      <div className="max-h-40 overflow-y-auto text-sm">
+                        {previewData.errors.slice(0, 10).map((error: any, i: number) => (
+                          <p key={i} className="text-red-700">
+                            Row {error.rowNumber}: {error.message}
+                          </p>
+                        ))}
+                        {previewData.errors.length > 10 && (
+                          <p className="text-red-600">...and {previewData.errors.length - 10} more</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setActiveTab('mapping')}>
+                      Back to Mapping
+                    </Button>
+                    <Button onClick={handleImport} disabled={isProcessing || previewData.validRows === 0}>
+                      {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Import {previewData.validRows} Rows
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      {/* Results Dialog */}
-      <Dialog open={showPreviewDialog} onOpenChange={setShowPreviewDialog}>
-        <DialogContent className="max-w-2xl">
+      {/* Result Dialog */}
+      <Dialog open={showResultDialog} onOpenChange={setShowResultDialog}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCircle className="h-6 w-6 text-green-500" />
-              Import Complete!
+              {importResult?.success ? (
+                <>
+                  <CheckCircle className="h-6 w-6 text-green-500" />
+                  Import Complete!
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-6 w-6 text-red-500" />
+                  Import Failed
+                </>
+              )}
             </DialogTitle>
             <DialogDescription>
-              Your data has been imported successfully.
+              {importResult?.success
+                ? 'Your data has been imported successfully.'
+                : importResult?.error || 'An error occurred during import.'}
             </DialogDescription>
           </DialogHeader>
 
-          {previewData && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-4 gap-4">
-                <div className="bg-green-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-green-600">{previewData.productsAdded}</p>
-                  <p className="text-sm text-green-700">Products Added</p>
-                </div>
-                <div className="bg-blue-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-blue-600">{previewData.productsUpdated}</p>
-                  <p className="text-sm text-blue-700">Products Updated</p>
-                </div>
-                <div className="bg-purple-50 p-4 rounded-lg text-center">
-                  <p className="text-2xl font-bold text-purple-600">{previewData.salesAdded}</p>
-                  <p className="text-sm text-purple-700">Sales Added</p>
-                </div>
-                <div className={`p-4 rounded-lg text-center ${previewData.errors.length > 0 ? 'bg-red-50' : 'bg-gray-50'}`}>
-                  <p className={`text-2xl font-bold ${previewData.errors.length > 0 ? 'text-red-600' : 'text-gray-600'}`}>
-                    {previewData.errors.length}
-                  </p>
-                  <p className={`text-sm ${previewData.errors.length > 0 ? 'text-red-700' : 'text-gray-700'}`}>Errors</p>
-                </div>
+          {importResult?.success && (
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-green-50 p-3 rounded-lg text-center">
+                <p className="text-xl font-bold text-green-600">{importResult.successful}</p>
+                <p className="text-xs text-green-700">Successful</p>
               </div>
-
-              {previewData.errors.length > 0 && (
-                <div className="border rounded-md p-4 bg-red-50">
-                  <h4 className="font-medium flex items-center gap-2 mb-2">
-                    <AlertCircle className="h-4 w-4 text-red-500" />
-                    Errors ({previewData.errors.length})
-                  </h4>
-                  <div className="max-h-40 overflow-y-auto text-sm">
-                    {previewData.errors.slice(0, 10).map((error, i) => (
-                      <p key={i} className="text-red-700">
-                        Row {error.rowNumber}: {error.message}
-                      </p>
-                    ))}
-                    {previewData.errors.length > 10 && (
-                      <p className="text-red-600">...and {previewData.errors.length - 10} more</p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={reset}>
-                  Import Another File
-                </Button>
-                <Button onClick={() => setShowPreviewDialog(false)}>
-                  Done
-                </Button>
+              <div className="bg-red-50 p-3 rounded-lg text-center">
+                <p className="text-xl font-bold text-red-600">{importResult.failed}</p>
+                <p className="text-xs text-red-700">Failed</p>
+              </div>
+              <div className="bg-muted p-3 rounded-lg text-center">
+                <p className="text-xl font-bold">{importResult.processed}</p>
+                <p className="text-xs text-muted-foreground">Processed</p>
               </div>
             </div>
           )}
+
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={reset}>
+              Import Another File
+            </Button>
+            <Button onClick={() => setShowResultDialog(false)}>Done</Button>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

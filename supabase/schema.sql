@@ -129,6 +129,140 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 );
 
 -- ============================================
+-- IMPORT & DATA TABLES
+-- ============================================
+
+-- Imports table - tracks import jobs
+CREATE TABLE IF NOT EXISTS imports (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    import_type TEXT NOT NULL CHECK (import_type IN ('products', 'inventory', 'sales', 'unified')),
+    file_name TEXT NOT NULL,
+    file_size_bytes INTEGER,
+    file_format TEXT NOT NULL DEFAULT 'csv',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'partial')),
+    total_rows INTEGER DEFAULT 0,
+    processed_rows INTEGER DEFAULT 0,
+    successful_rows INTEGER DEFAULT 0,
+    failed_rows INTEGER DEFAULT 0,
+    error_log JSONB DEFAULT '[]'::jsonb,
+    mapping_config JSONB DEFAULT '[]'::jsonb,
+    mapping_accuracy INTEGER,
+    column_mapping_details JSONB DEFAULT '[]'::jsonb,
+    started_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    processing_time_ms INTEGER,
+    initiated_by UUID NOT NULL REFERENCES profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Import row details table - tracks individual row errors
+CREATE TABLE IF NOT EXISTS import_row_details (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    import_id UUID NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+    row_number INTEGER NOT NULL,
+    row_data JSONB DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'error')),
+    error_message TEXT,
+    error_field TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Product categories table
+CREATE TABLE IF NOT EXISTS product_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT,
+    color TEXT DEFAULT '#3b82f6',
+    icon TEXT DEFAULT 'tag',
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(store_id, name)
+);
+
+-- Products table
+CREATE TABLE IF NOT EXISTS products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    sku TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    category_id UUID REFERENCES product_categories(id) ON DELETE SET NULL,
+    barcode TEXT,
+    cost_price DECIMAL(12,2),
+    selling_price DECIMAL(12,2) NOT NULL,
+    tax_rate DECIMAL(5,2) DEFAULT 0,
+    min_stock_level INTEGER DEFAULT 0,
+    max_stock_level INTEGER,
+    reorder_point INTEGER DEFAULT 0,
+    reorder_quantity INTEGER,
+    unit_of_measure TEXT DEFAULT 'unit',
+    weight_kg DECIMAL(10,3),
+    supplier_name TEXT,
+    supplier_contact TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(store_id, sku)
+);
+
+-- Sales receipts table
+CREATE TABLE IF NOT EXISTS sales_receipts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    location_id UUID REFERENCES store_locations(id) ON DELETE SET NULL,
+    receipt_number TEXT NOT NULL,
+    transaction_date TIMESTAMPTZ NOT NULL,
+    subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
+    tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    payment_method TEXT NOT NULL DEFAULT 'other',
+    payment_status TEXT NOT NULL DEFAULT 'completed',
+    customer_name TEXT,
+    customer_email TEXT,
+    customer_phone TEXT,
+    cashier_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(store_id, receipt_number)
+);
+
+-- Sale line items table
+CREATE TABLE IF NOT EXISTS sale_line_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    receipt_id UUID NOT NULL REFERENCES sales_receipts(id) ON DELETE CASCADE,
+    product_id UUID REFERENCES products(id) ON DELETE SET NULL,
+    product_name TEXT NOT NULL,
+    product_sku TEXT,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price DECIMAL(12,2) NOT NULL DEFAULT 0,
+    discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    tax_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+    cost_price DECIMAL(12,2),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Inventory snapshots table
+CREATE TABLE IF NOT EXISTS inventory_snapshots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
+    location_id UUID REFERENCES store_locations(id) ON DELETE SET NULL,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    quantity INTEGER NOT NULL DEFAULT 0,
+    reserved_quantity INTEGER NOT NULL DEFAULT 0,
+    unit_cost DECIMAL(12,2),
+    total_value DECIMAL(12,2),
+    snapshot_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================
 -- INDEXES
 -- ============================================
 
@@ -169,6 +303,47 @@ CREATE INDEX IF NOT EXISTS idx_audit_metadata ON audit_logs USING GIN(metadata);
 
 -- User preferences indexes
 CREATE INDEX IF NOT EXISTS idx_preferences_user ON user_preferences(user_id);
+
+-- Imports indexes
+CREATE INDEX IF NOT EXISTS idx_imports_store ON imports(store_id);
+CREATE INDEX IF NOT EXISTS idx_imports_status ON imports(status);
+CREATE INDEX IF NOT EXISTS idx_imports_type ON imports(import_type);
+CREATE INDEX IF NOT EXISTS idx_imports_initiated_by ON imports(initiated_by);
+CREATE INDEX IF NOT EXISTS idx_imports_created_at ON imports(created_at DESC);
+
+-- Import row details indexes
+CREATE INDEX IF NOT EXISTS idx_import_row_details_import ON import_row_details(import_id);
+CREATE INDEX IF NOT EXISTS idx_import_row_details_status ON import_row_details(status);
+CREATE INDEX IF NOT EXISTS idx_import_row_details_row_number ON import_row_details(import_id, row_number);
+
+-- Product categories indexes
+CREATE INDEX IF NOT EXISTS idx_categories_store ON product_categories(store_id);
+CREATE INDEX IF NOT EXISTS idx_categories_active ON product_categories(is_active);
+
+-- Products indexes
+CREATE INDEX IF NOT EXISTS idx_products_store ON products(store_id);
+CREATE INDEX IF NOT EXISTS idx_products_sku ON products(store_id, sku);
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
+CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active);
+CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
+
+-- Sales receipts indexes
+CREATE INDEX IF NOT EXISTS idx_receipts_store ON sales_receipts(store_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_number ON sales_receipts(store_id, receipt_number);
+CREATE INDEX IF NOT EXISTS idx_receipts_date ON sales_receipts(transaction_date DESC);
+CREATE INDEX IF NOT EXISTS idx_receipts_location ON sales_receipts(location_id);
+CREATE INDEX IF NOT EXISTS idx_receipts_cashier ON sales_receipts(cashier_id);
+
+-- Sale line items indexes
+CREATE INDEX IF NOT EXISTS idx_line_items_receipt ON sale_line_items(receipt_id);
+CREATE INDEX IF NOT EXISTS idx_line_items_product ON sale_line_items(product_id);
+
+-- Inventory snapshots indexes
+CREATE INDEX IF NOT EXISTS idx_inventory_store ON inventory_snapshots(store_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_product ON inventory_snapshots(product_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_location ON inventory_snapshots(location_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_date ON inventory_snapshots(snapshot_date DESC);
+CREATE INDEX IF NOT EXISTS idx_inventory_store_product ON inventory_snapshots(store_id, product_id);
 
 -- ============================================
 -- HELPER FUNCTIONS
@@ -302,6 +477,22 @@ CREATE TRIGGER update_user_preferences_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+-- Triggers for new tables
+CREATE TRIGGER update_product_categories_updated_at
+    BEFORE UPDATE ON product_categories
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_products_updated_at
+    BEFORE UPDATE ON products
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_sales_receipts_updated_at
+    BEFORE UPDATE ON sales_receipts
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 -- Trigger to auto-add owner as member when store is created
 CREATE OR REPLACE FUNCTION add_owner_as_member()
 RETURNS TRIGGER
@@ -376,6 +567,18 @@ ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE store_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE user_preferences ENABLE ROW LEVEL SECURITY;
+
+-- ============================================
+-- ENABLE ROW LEVEL SECURITY FOR NEW TABLES
+-- ============================================
+
+ALTER TABLE imports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE import_row_details ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sales_receipts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sale_line_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory_snapshots ENABLE ROW LEVEL SECURITY;
 
 -- ============================================
 -- RLS POLICIES
@@ -499,3 +702,84 @@ CREATE POLICY "Users can manage own preferences"
     ON user_preferences FOR ALL
     USING (auth.uid() = user_id)
     WITH CHECK (auth.uid() = user_id);
+
+-- Imports policies
+CREATE POLICY "Store members can view imports"
+    ON imports FOR SELECT
+    USING (is_store_member(store_id, auth.uid()));
+
+CREATE POLICY "Store admins can create imports"
+    ON imports FOR INSERT
+    WITH CHECK (has_store_role(store_id, auth.uid(), 'admin'));
+
+-- Import row details policies
+CREATE POLICY "Store members can view import row details"
+    ON import_row_details FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM imports
+            WHERE imports.id = import_row_details.import_id
+            AND is_store_member(imports.store_id, auth.uid())
+        )
+    );
+
+-- Product categories policies
+CREATE POLICY "Store members can view categories"
+    ON product_categories FOR SELECT
+    USING (is_store_member(store_id, auth.uid()));
+
+CREATE POLICY "Store admins can manage categories"
+    ON product_categories FOR ALL
+    USING (has_store_role(store_id, auth.uid(), 'admin'))
+    WITH CHECK (has_store_role(store_id, auth.uid(), 'admin'));
+
+-- Products policies
+CREATE POLICY "Store members can view products"
+    ON products FOR SELECT
+    USING (is_store_member(store_id, auth.uid()));
+
+CREATE POLICY "Store admins can manage products"
+    ON products FOR ALL
+    USING (has_store_role(store_id, auth.uid(), 'admin'))
+    WITH CHECK (has_store_role(store_id, auth.uid(), 'admin'));
+
+-- Sales receipts policies
+CREATE POLICY "Store members can view receipts"
+    ON sales_receipts FOR SELECT
+    USING (is_store_member(store_id, auth.uid()));
+
+CREATE POLICY "Store admins can manage receipts"
+    ON sales_receipts FOR ALL
+    USING (has_store_role(store_id, auth.uid(), 'admin'))
+    WITH CHECK (has_store_role(store_id, auth.uid(), 'admin'));
+
+-- Sale line items policies
+CREATE POLICY "Store members can view line items"
+    ON sale_line_items FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM sales_receipts
+            WHERE sales_receipts.id = sale_line_items.receipt_id
+            AND is_store_member(sales_receipts.store_id, auth.uid())
+        )
+    );
+
+CREATE POLICY "Store admins can manage line items"
+    ON sale_line_items FOR ALL
+    USING (
+        EXISTS (
+            SELECT 1 FROM sales_receipts
+            WHERE sales_receipts.id = sale_line_items.receipt_id
+            AND has_store_role(sales_receipts.store_id, auth.uid(), 'admin')
+        )
+    );
+
+-- Inventory snapshots policies
+CREATE POLICY "Store members can view inventory"
+    ON inventory_snapshots FOR SELECT
+    USING (is_store_member(store_id, auth.uid()));
+
+CREATE POLICY "Store admins can manage inventory"
+    ON inventory_snapshots FOR ALL
+    USING (has_store_role(store_id, auth.uid(), 'admin'))
+    WITH CHECK (has_store_role(store_id, auth.uid(), 'admin'));

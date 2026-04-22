@@ -451,7 +451,7 @@ export const useStore = create<StoreState>()(
         })
 
         // Group sales by receipt number
-        const salesByReceipt = new Map<string, Partial<Sale> & { lineItems: Partial<SaleLineItem>[] }>()
+        const salesByReceipt = new Map<string, Omit<Sale, 'id' | 'createdAt'> & { lineItems: Partial<SaleLineItem>[] }>()
 
         rows.forEach((row, rowIndex) => {
           const rowNumber = rowIndex + 1
@@ -691,7 +691,7 @@ export const useStore = create<StoreState>()(
         const { products } = get()
         const headers = ['sku', 'name', 'description', 'category', 'barcode', 'selling_price', 'cost_price', 'tax_rate', 'stock', 'min_stock_level', 'max_stock_level', 'reorder_point', 'reorder_quantity', 'unit_of_measure', 'supplier_name', 'supplier_contact', 'is_active']
 
-        const rows = products.map((p) => [
+        const rows: (string | number | boolean)[][] = products.map((p) => [
           p.sku,
           p.name,
           p.description || '',
@@ -718,7 +718,7 @@ export const useStore = create<StoreState>()(
         const { sales } = get()
         const headers = ['receipt_number', 'transaction_date', 'location_name', 'product_sku', 'product_name', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'payment_method', 'customer_name', 'customer_email', 'customer_phone', 'cashier_name', 'notes']
 
-        const rows: string[][] = []
+        const rows: (string | number)[][] = []
         sales.forEach((sale) => {
           sale.lineItems.forEach((item) => {
             rows.push([
@@ -751,7 +751,7 @@ export const useStore = create<StoreState>()(
         const headers = ['sku', 'name', 'description', 'category', 'barcode', 'selling_price', 'cost_price', 'tax_rate', 'stock', 'min_stock_level', 'max_stock_level', 'reorder_point', 'reorder_quantity', 'unit_of_measure', 'supplier_name', 'supplier_contact', 'is_active', 'receipt_number', 'transaction_date', 'location_name', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'payment_method', 'customer_name', 'customer_email', 'customer_phone', 'cashier_name', 'notes']
 
         // Product rows (no receipt_number)
-        const productRows = products.map((p) => [
+        const productRows: (string | number | boolean)[][] = products.map((p) => [
           p.sku,
           p.name,
           p.description || '',

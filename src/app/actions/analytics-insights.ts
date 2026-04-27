@@ -29,6 +29,15 @@ export async function generateInsights(storeId: string): Promise<Insight[]> {
   const insights: Insight[] = []
 
   // Get products with sales data
+  interface ProductData {
+    id: string;
+    name: string;
+    sku: string;
+    selling_price: number | null;
+    cost_price: number | null;
+    stock: number | null;
+  }
+
   const { data: products } = await supabase
     .from('products')
     .select(`
@@ -42,32 +51,49 @@ export async function generateInsights(storeId: string): Promise<Insight[]> {
     .eq('store_id', storeId)
     .eq('is_active', true)
 
-  if (!products || products.length === 0) {
+  const typedProducts = (products || []) as ProductData[]
+
+  if (typedProducts.length === 0) {
     return insights
   }
 
   // Get sales data for products
-  const { data: salesData } = await supabase
-    .from('sale_line_items')
-    .select(`
-      product_id,
-      quantity,
-      unit_price,
-      total_amount
-    `)
-    .in(
-      'receipt_id',
-      supabase
-        .from('sales_receipts')
-        .select('id')
-        .eq('store_id', storeId)
-        .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()) // Last 30 days
-    )
+  // First, get receipt IDs for this store in the last 30 days
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  const { data: receiptIds } = await supabase
+    .from('sales_receipts')
+    .select('id')
+    .eq('store_id', storeId)
+    .gte('transaction_date', thirtyDaysAgo)
+
+  const receiptIdList = receiptIds?.map((r: { id: string }) => r.id) || []
+
+  // Then get line items for those receipts
+  interface SalesLineItem {
+    product_id: string;
+    quantity: number;
+    unit_price: number;
+    total_amount: number;
+  }
+
+  let salesData: SalesLineItem[] = []
+  if (receiptIdList.length > 0) {
+    const { data: lineItems } = await supabase
+      .from('sale_line_items')
+      .select(`
+        product_id,
+        quantity,
+        unit_price,
+        total_amount
+      `)
+      .in('receipt_id', receiptIdList)
+    salesData = (lineItems || []) as SalesLineItem[]
+  }
 
   // Calculate metrics per product
-  const productMetrics = products.map((product) => {
+  const productMetrics = typedProducts.map((product) => {
     const productSales =
-      salesData?.filter((s) => s.product_id === product.id) || []
+      salesData.filter((s) => s.product_id === product.id) || []
     const totalRevenue = productSales.reduce(
       (sum, s) => sum + (s.total_amount || 0),
       0
@@ -112,7 +138,7 @@ export async function generateInsights(storeId: string): Promise<Insight[]> {
   })
 
   // Identify low stock alerts
-  products.forEach((product) => {
+  typedProducts.forEach((product) => {
     if (product.stock && product.stock <= 10) {
       insights.push({
         insight_type: 'low_stock_alert',
@@ -176,6 +202,7 @@ export async function generateInsights(storeId: string): Promise<Insight[]> {
   )
 
   highMarginProducts.slice(0, 3).forEach((product) => {
+    if (!product.selling_price || !product.cost_price) return
     const margin = ((product.selling_price - product.cost_price) / product.cost_price) * 100
     insights.push({
       insight_type: 'profit_opportunity',
@@ -199,7 +226,7 @@ export async function generateInsights(storeId: string): Promise<Insight[]> {
       description: `${product.stock} units in stock with no recent sales.`,
       product_id: product.id,
       product_name: product.name,
-      metric_value: product.stock,
+      metric_value: product.stock || 0,
       metric_unit: 'units',
       severity: 'warning',
       action_recommended: 'Consider clearance pricing to free up capital.',
@@ -237,7 +264,8 @@ export async function saveInsights(storeId: string, insights: Insight[]) {
     expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
   }))
 
-  const { error } = await supabase
+  const supabaseClient = supabase as any
+  const { error } = await supabaseClient
     .from('os_analytics_insights')
     .insert(insightsToInsert)
 
@@ -261,8 +289,9 @@ export async function refreshInsights(storeId: string) {
 // Dismiss an insight
 export async function dismissInsight(insightId: string) {
   const supabase = await createServerSupabaseClient()
+  const supabaseClient = supabase as any
 
-  const { error } = await supabase
+  const { error } = await supabaseClient
     .from('os_analytics_insights')
     .update({ dismissed: true })
     .eq('id', insightId)
@@ -278,8 +307,9 @@ export async function dismissInsight(insightId: string) {
 // Mark action as taken
 export async function markInsightActioned(insightId: string) {
   const supabase = await createServerSupabaseClient()
+  const supabaseClient = supabase as any
 
-  const { error } = await supabase
+  const { error } = await supabaseClient
     .from('os_analytics_insights')
     .update({ action_taken: true })
     .eq('id', insightId)

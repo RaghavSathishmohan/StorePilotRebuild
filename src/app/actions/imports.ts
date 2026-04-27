@@ -169,22 +169,40 @@ function getFieldsForImportType(importType: string): { name: string; required: b
       // Product fields
       { name: 'sku', required: false, type: 'string' },
       { name: 'name', required: false, type: 'string' },
-      { name: 'selling_price', required: false, type: 'number' },
       { name: 'category', required: false, type: 'string' },
+      { name: 'barcode', required: false, type: 'string' },
       { name: 'cost_price', required: false, type: 'number' },
+      { name: 'selling_price', required: false, type: 'number' },
+      { name: 'tax_rate', required: false, type: 'number' },
       { name: 'stock', required: false, type: 'integer' },
+      { name: 'min_stock_level', required: false, type: 'integer' },
+      { name: 'max_stock_level', required: false, type: 'integer' },
+      { name: 'reorder_point', required: false, type: 'integer' },
+      { name: 'reorder_quantity', required: false, type: 'integer' },
+      { name: 'unit_of_measure', required: false, type: 'string' },
+      { name: 'supplier_name', required: false, type: 'string' },
+      { name: 'supplier_contact', required: false, type: 'string' },
+      { name: 'is_active', required: false, type: 'boolean' },
       // Sales fields
       { name: 'receipt_number', required: false, type: 'string' },
       { name: 'transaction_date', required: false, type: 'datetime' },
       { name: 'quantity', required: false, type: 'integer' },
       { name: 'unit_price', required: false, type: 'number' },
+      { name: 'discount_amount', required: false, type: 'number' },
+      { name: 'tax_amount', required: false, type: 'number' },
       { name: 'payment_method', required: false, type: 'string' },
+      { name: 'location_name', required: false, type: 'string' },
+      { name: 'customer_name', required: false, type: 'string' },
+      { name: 'customer_email', required: false, type: 'string' },
+      { name: 'customer_phone', required: false, type: 'string' },
+      { name: 'cashier_name', required: false, type: 'string' },
+      { name: 'notes', required: false, type: 'string' },
     ],
   }
   return fields[importType] || []
 }
 
-// Preview import - validate without saving
+// Preview import - validate all rows without saving
 export async function previewImport(
   parsedCSV: { headers: string[]; rows: Record<string, string>[]; totalRows: number },
   importType: string,
@@ -198,10 +216,8 @@ export async function previewImport(
 
   const fieldMap = new Map(columnMapping.map(m => [m.csvColumn, m.dbField]))
 
-  // Preview first 100 rows
-  const previewLimit = Math.min(parsedCSV.rows.length, 100)
-
-  for (let i = 0; i < previewLimit; i++) {
+  // Validate ALL rows
+  for (let i = 0; i < parsedCSV.rows.length; i++) {
     const row = parsedCSV.rows[i]
     const rowNumber = i + 1
     const rowErrors: { rowNumber: number; field: string; value: string; message: string }[] = []
@@ -254,8 +270,8 @@ export async function previewImport(
     totalRows: parsedCSV.totalRows,
     validRows: validCount,
     invalidRows: invalidCount,
-    previewRows: previewLimit,
-    errors: errors.slice(0, 50), // Limit errors shown
+    previewRows: parsedCSV.rows.length,
+    errors: errors.slice(0, 100), // Limit errors shown
     warnings,
   }
 }
@@ -390,128 +406,303 @@ export async function processImport(
 
     const { data: existingProducts } = await serviceClient
       .from('products')
-      .select('id, sku')
+      .select('id, sku, cost_price')
       .eq('store_id', storeId)
 
-    const productMap = new Map((existingProducts || []).map((p: { sku: string; id: string }) => [p.sku.toLowerCase(), p.id]))
+    const typedExistingProducts = (existingProducts || []) as { id: string; sku: string; cost_price: number | null }[]
 
-    // Process in batches
-    const batchSize = 100
-    for (let i = 0; i < parsedCSV.rows.length; i += batchSize) {
-      const batch = parsedCSV.rows.slice(i, i + batchSize)
+    const productMap = new Map(typedExistingProducts.map((p) => [p.sku.toLowerCase(), p.id]))
+    const productsList = typedExistingProducts
 
-      for (let j = 0; j < batch.length; j++) {
-        const row = batch[j]
-        const rowNumber = i + j + 1
+    // Collect all unique categories from the import
+    const categoriesToCreate = new Set<string>()
+    const productsToInsert: any[] = []
+    const productsToUpdate: { id: string; data: any }[] = []
+
+    // First pass: categorize rows and collect data
+    for (const row of parsedCSV.rows) {
+      const data: Record<string, unknown> = {}
+      for (const [csvColumn, value] of Object.entries(row)) {
+        const dbField = fieldMap.get(csvColumn)
+        if (dbField) {
+          data[dbField] = transformValue(value, dbField)
+        }
+      }
+
+      // Check if sales row for unified imports
+      const isSalesRow = importType === 'unified' && data.receipt_number
+
+      if (importType === 'products' || (importType === 'unified' && !isSalesRow)) {
+        if (!data.sku) continue
+
+        // Collect categories to create
+        if (data.category) {
+          const catName = String(data.category).toLowerCase()
+          if (!categoryMap.has(catName)) {
+            categoriesToCreate.add(String(data.category))
+          }
+        }
+
+        const sku = String(data.sku).toLowerCase()
+        const existingId = productMap.get(sku)
+
+        const productData = {
+          store_id: storeId,
+          sku: String(data.sku),
+          name: String(data.name),
+          description: data.description || null,
+          category_id: data.category ? null : null, // Will fill in after categories created
+          category_name: data.category || null, // Store temporarily
+          barcode: data.barcode || null,
+          cost_price: data.cost_price || null,
+          selling_price: data.selling_price || 0,
+          tax_rate: data.tax_rate || 0,
+          min_stock_level: data.min_stock_level || 0,
+          max_stock_level: data.max_stock_level || null,
+          reorder_point: data.reorder_point || 0,
+          reorder_quantity: data.reorder_quantity || null,
+          unit_of_measure: data.unit_of_measure || 'unit',
+          supplier_name: data.supplier_name || null,
+          supplier_contact: data.supplier_contact || null,
+          is_active: data.is_active !== false,
+          stock: data.stock || 0,
+        }
+
+        if (existingId) {
+          productsToUpdate.push({ id: existingId, data: productData })
+        } else {
+          productsToInsert.push(productData)
+        }
+      }
+    }
+
+    // Batch create new categories
+    if (categoriesToCreate.size > 0) {
+      const newCategories = Array.from(categoriesToCreate).map(name => ({
+        store_id: storeId,
+        name: name,
+      }))
+
+      const { data: createdCats } = await (serviceClient
+        .from('product_categories') as any)
+        .insert(newCategories)
+        .select('id, name')
+
+      if (createdCats) {
+        for (const cat of createdCats) {
+          categoryMap.set(cat.name.toLowerCase(), cat.id)
+        }
+      }
+    }
+
+    // Resolve category IDs for products
+    for (const product of productsToInsert) {
+      if (product.category_name) {
+        product.category_id = categoryMap.get(product.category_name.toLowerCase()) || null
+      }
+      delete product.category_name // Remove temp field
+    }
+
+    for (const product of productsToUpdate) {
+      if (product.data.category_name) {
+        product.data.category_id = categoryMap.get(product.data.category_name.toLowerCase()) || null
+      }
+      delete product.data.category_name // Remove temp field
+    }
+
+    // Batch insert new products
+    if (productsToInsert.length > 0) {
+      const batchSize = 500
+      for (let i = 0; i < productsToInsert.length; i += batchSize) {
+        const batch = productsToInsert.slice(i, i + batchSize)
+        const { data: inserted } = await (serviceClient
+          .from('products') as any)
+          .insert(batch)
+          .select('id, sku')
+
+        if (inserted) {
+          for (const product of inserted) {
+            productMap.set(product.sku.toLowerCase(), product.id)
+          }
+          successfulRows += batch.length
+        }
+      }
+    }
+
+    // Batch update existing products
+    if (productsToUpdate.length > 0) {
+      const batchSize = 100
+      for (let i = 0; i < productsToUpdate.length; i += batchSize) {
+        const batch = productsToUpdate.slice(i, i + batchSize)
+        for (const { id, data } of batch) {
+          await (serviceClient.from('products') as any).update(data).eq('id', id)
+        }
+        successfulRows += batch.length
+      }
+    }
+
+    // Create inventory snapshots for new products with stock
+    const productsWithStock = productsToInsert.filter(p => p.stock > 0)
+    if (productsWithStock.length > 0) {
+      const today = new Date().toISOString().split('T')[0]
+      const snapshots = productsWithStock.map(p => ({
+        store_id: storeId,
+        product_id: productMap.get(p.sku.toLowerCase()),
+        quantity: p.stock,
+        snapshot_date: today,
+        notes: 'Imported from CSV',
+      })).filter(s => s.product_id)
+
+      if (snapshots.length > 0) {
+        const batchSize = 500
+        for (let i = 0; i < snapshots.length; i += batchSize) {
+          await (serviceClient.from('inventory_snapshots') as any).insert(snapshots.slice(i, i + batchSize))
+        }
+      }
+    }
+
+    // Process sales if this is a sales import
+    if (importType === 'sales') {
+      // Group rows by receipt_number
+      const receiptsMap: Map<string, {
+        receipt_number: string
+        transaction_date: string
+        payment_method: string
+        total_amount: number
+        items: any[]
+      }> = new Map()
+
+      for (const row of parsedCSV.rows) {
+        const data: Record<string, unknown> = {}
+        for (const [csvColumn, value] of Object.entries(row)) {
+          const dbField = fieldMap.get(csvColumn)
+          if (dbField) {
+            data[dbField] = transformValue(value, dbField)
+          }
+        }
+
+        const receiptNum = String(data.receipt_number || '')
+        if (!receiptNum) continue
+
+        if (!receiptsMap.has(receiptNum)) {
+          receiptsMap.set(receiptNum, {
+            receipt_number: receiptNum,
+            transaction_date: String(data.transaction_date || new Date().toISOString()),
+            payment_method: String(data.payment_method || 'other'),
+            total_amount: Number(data.total_amount || 0),
+            items: []
+          })
+        }
+
+        const receipt = receiptsMap.get(receiptNum)!
+        const sku = String(data.sku || '')
+        const productId = productMap.get(sku.toLowerCase())
+
+        // Look up product cost for profit calculation
+        const productCost = productId ?
+          productsList.find(p => p.id === productId)?.cost_price : null
+
+        receipt.items.push({
+          product_id: productId,
+          product_sku: sku,
+          product_name: String(data.product_name || data.name || 'Unknown'),
+          quantity: Number(data.quantity || 1),
+          unit_price: Number(data.unit_price || 0),
+          discount_amount: Number(data.discount_amount || 0),
+          tax_amount: Number(data.tax_amount || 0),
+          cost_price: productCost || 0,
+          total_amount: (Number(data.unit_price || 0) * Number(data.quantity || 1)) - Number(data.discount_amount || 0)
+        })
+      }
+
+      // Create receipts and line items in BATCHES for better performance
+      const receiptsList = Array.from(receiptsMap.values())
+      const receiptBatchSize = 500
+      const lineItemsBatch: any[] = []
+
+      for (let i = 0; i < receiptsList.length; i += receiptBatchSize) {
+        const batch = receiptsList.slice(i, i + receiptBatchSize)
+
+        // Prepare receipt data with calculated totals
+        const receiptsData = batch.map(receiptData => {
+          const subtotal = receiptData.items.reduce((sum, item) =>
+            sum + (item.unit_price * item.quantity), 0)
+          const discountTotal = receiptData.items.reduce((sum, item) =>
+            sum + item.discount_amount, 0)
+          const taxTotal = receiptData.items.reduce((sum, item) =>
+            sum + item.tax_amount, 0)
+          const total = subtotal - discountTotal + taxTotal
+
+          return {
+            store_id: storeId,
+            receipt_number: receiptData.receipt_number,
+            transaction_date: receiptData.transaction_date,
+            payment_method: receiptData.payment_method,
+            subtotal: subtotal,
+            discount_amount: discountTotal,
+            tax_amount: taxTotal,
+            total_amount: total,
+            payment_status: 'completed',
+          }
+        })
 
         try {
-          // Transform row data
-          const data: Record<string, unknown> = {}
-          for (const [csvColumn, value] of Object.entries(row)) {
-            const dbField = fieldMap.get(csvColumn)
-            if (dbField) {
-              data[dbField] = transformValue(value, dbField)
-            }
-          }
+          // Batch insert receipts
+          const { data: insertedReceipts, error: receiptError } = await (serviceClient
+            .from('sales_receipts') as any)
+            .insert(receiptsData)
+            .select('id, receipt_number')
 
-          // Check if sales row for unified imports
-          const isSalesRow = importType === 'unified' && data.receipt_number
+          if (receiptError) throw receiptError
 
-          if (importType === 'products' || (importType === 'unified' && !isSalesRow)) {
-            // Process product
-            if (!data.sku) continue
+          // Map receipt numbers to IDs and collect line items
+          if (insertedReceipts) {
+            const receiptIdMap = new Map(insertedReceipts.map((r: { receipt_number: string; id: string }) => [r.receipt_number, r.id]))
 
-            const sku = String(data.sku).toLowerCase()
-            const existingId = productMap.get(sku)
-
-            // Get or create category
-            let categoryId = null
-            if (data.category) {
-              const catName = String(data.category).toLowerCase()
-              categoryId = categoryMap.get(catName)
-
-              if (!categoryId) {
-                // Create new category
-                const { data: newCat } = await (serviceClient
-                  .from('product_categories') as any)
-                  .insert({ store_id: storeId, name: String(data.category) })
-                  .select('id')
-                  .single()
-
-                if (newCat) {
-                  categoryId = (newCat as { id: string }).id
-                  categoryMap.set(catName, categoryId)
-                }
-              }
-            }
-
-            const productData = {
-              store_id: storeId,
-              sku: String(data.sku),
-              name: String(data.name),
-              description: data.description || null,
-              category_id: categoryId,
-              barcode: data.barcode || null,
-              cost_price: data.cost_price || null,
-              selling_price: data.selling_price || 0,
-              tax_rate: data.tax_rate || 0,
-              min_stock_level: data.min_stock_level || 0,
-              max_stock_level: data.max_stock_level || null,
-              reorder_point: data.reorder_point || 0,
-              reorder_quantity: data.reorder_quantity || null,
-              unit_of_measure: data.unit_of_measure || 'unit',
-              supplier_name: data.supplier_name || null,
-              supplier_contact: data.supplier_contact || null,
-              is_active: data.is_active !== false,
-            }
-
-            if (existingId) {
-              await (serviceClient.from('products') as any).update(productData).eq('id', existingId)
-            } else {
-              const { data: newProduct } = await (serviceClient.from('products') as any).insert(productData).select('id').single()
-              if (newProduct) {
-                productMap.set(sku, (newProduct as { id: string }).id)
-
-                // Create inventory snapshot if stock provided
-                if (data.stock) {
-                  await (serviceClient.from('inventory_snapshots') as any).insert({
-                    store_id: storeId,
-                    product_id: (newProduct as { id: string }).id,
-                    quantity: Number(data.stock),
-                    snapshot_date: new Date().toISOString().split('T')[0],
-                    notes: 'Imported from CSV',
+            for (const receiptData of batch) {
+              const receiptId = receiptIdMap.get(receiptData.receipt_number)
+              if (receiptId && receiptData.items.length > 0) {
+                for (const item of receiptData.items) {
+                  lineItemsBatch.push({
+                    receipt_id: receiptId,
+                    ...item
                   })
                 }
               }
             }
-            successfulRows++
-          } else if (importType === 'sales' || isSalesRow) {
-            // Process sales - simplified for now
-            // TODO: Group by receipt number and create receipts + line items
-            successfulRows++
           }
-        } catch (err) {
-          failedRows++
-          const errorMsg = err instanceof Error ? err.message : 'Unknown error'
-          errorLog.push({
-            rowNumber,
-            field: 'general',
-            value: JSON.stringify(row).slice(0, 200),
-            message: errorMsg,
-          })
 
-          // Log row error
-          await (serviceClient.from('import_row_details') as any).insert({
-            import_id: importId,
-            row_number: rowNumber,
-            row_data: row,
-            status: 'error',
-            error_message: errorMsg,
+          successfulRows += batch.length
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : 'Failed to create receipts'
+          errorLog.push({
+            rowNumber: i,
+            field: 'receipt',
+            value: batch.map(r => r.receipt_number).join(', '),
+            message: errorMsg
           })
+          failedRows += batch.length
         }
       }
 
-      processedRows += batch.length
+      // Batch insert all line items
+      if (lineItemsBatch.length > 0) {
+        const lineItemBatchSize = 1000
+        for (let i = 0; i < lineItemsBatch.length; i += lineItemBatchSize) {
+          const batch = lineItemsBatch.slice(i, i + lineItemBatchSize)
+          try {
+            await (serviceClient.from('sale_line_items') as any).insert(batch)
+            successfulRows += batch.length
+          } catch (err) {
+            console.error('Error inserting line items batch:', err)
+            failedRows += batch.length
+          }
+        }
+      }
+
+      processedRows = parsedCSV.rows.length
+    } else {
+      processedRows = parsedCSV.rows.length
     }
 
     // Update import status

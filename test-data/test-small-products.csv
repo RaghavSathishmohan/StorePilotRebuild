@@ -1,0 +1,51 @@
+sku,name,category,barcode,cost_price,selling_price,tax_rate,stock,min_stock,max_stock,reorder_point,reorder_quantity,unit_of_measure,supplier_name,is_active
+BEV-0000,"Natural Cola 61oz",Beverages,,11.85,27.37,9.2,0,6,54,9,30,bottle,General Mills,true
+SNA-0001,"Tortilla Chips 44oz",Snacks,740545347396,6.46,15.25,3.2,9,38,684,57,152,gal,Frito-Lay,true
+TOB-0002,"Sugar-Free Cigars 53oz",Tobacco,128846862436,13.37,25.94,6.9,62,26,208,39,104,liter,Colgate-Palmolive,true
+HOU-0003,"Dish Soap 22oz",Household,700663741134,11.56,15.03,0.5,14,40,240,60,200,lb,Kellogg's,true
+DAI-0004,"Cream Cheese 21oz",Dairy,465463039558,11.13,18.14,1.5,38,25,250,37,125,bottle,Procter & Gamble,true
+FRO-0005,"Original Pizza 56oz",Frozen,368667655087,6.73,16.49,4.8,38,29,174,43,58,oz,Colgate-Palmolive,true
+CAN-0006,"Chocolate Bar 39oz",Candy,282372384118,3,5.4,3.6,456,5,95,7,10,oz,Mars Inc,true
+HEA-0007,"Shampoo 18oz",Health & Beauty,778954529325,3.13,5.73,9.5,59,25,100,37,125,gal,Hershey Company,true
+AUT-0008,"Fresh Motor Oil 16oz",Automotive,384625838379,6.73,16.62,5.2,67,34,340,51,170,oz,,true
+GRO-0009,"Natural Canned Soup 10oz",Grocery,698818423426,6.36,8.33,1,3,18,216,27,54,pack,Philip Morris,true
+BAK-0010,"Bagels 29oz",Bakery,386296868919,12.58,24.41,9,325,39,780,58,78,lb,PepsiCo,false
+DEL-0011,"Salad 28oz",Deli,518355199556,9.85,14.48,3,4,29,406,43,145,can,Frito-Lay,true
+PET-0012,"Light Treats 60oz",Pet Supplies,442507490259,1.87,3.5,2.8,7,31,403,46,62,pack,Hershey Company,true
+BEV-0013,"Light Sports Drink 9oz",Beverages,322488123831,14.85,21.98,5.3,262,10,160,15,40,gal,Kraft Foods,true
+SNA-0014,"Potato Chips 18oz",Snacks,224991311800,4.02,6.59,2.7,500,25,300,37,125,case,Unilever,true
+TOB-0015,"Organic Cigarettes 28oz",Tobacco,500978461562,4.4,10.25,9.9,439,6,66,9,24,unit,Colgate-Palmolive,false
+HOU-0016,"Trash Bags 25oz",Household,712642344190,13.89,29.45,0.3,0,24,96,36,120,bottle,Hershey Company,true
+DAI-0017,"Sour Cream 12oz",Dairy,690212026180,10.32,18.68,9.7,64,32,544,48,64,lb,Mars Inc,false
+FRO-0018,"Frozen Meals 6oz",Frozen,205462322013,14.81,21.62,8.3,337,6,72,9,18,unit,Unilever,true
+CAN-0019,"Gummy Bears 10oz",Candy,933191067972,2.97,6.06,2.1,350,8,32,12,16,pack,Kellogg's,true
+HEA-0020,"Soap 28oz",Health & Beauty,468954072293,11.87,19.94,4.5,12,29,174,43,58,case,Philip Morris,true
+AUT-0021,"Sugar-Free Windshield Fluid 35oz",Automotive,756272155375,12.93,27.8,3.4,392,7,42,10,28,unit,Kellogg's,true
+GRO-0022,"Light Bread 19oz",Grocery,347166826773,0.87,1.77,5.4,21,17,289,25,68,unit,Frito-Lay,true
+BAK-0023,"Original Bread Loaf 27oz",Bakery,112465382664,13.72,23.87,6,344,13,117,19,52,bottle,Frito-Lay,true
+DEL-0024,"Organic Cheese Slices 64oz",Deli,543751387137,13.63,23.17,2.3,0,25,225,37,75,lb,Unilever,true
+PET-0025,"Dog Food 25oz",Pet Supplies,702418640136,8.71,19.42,0.5,125,22,418,33,44,unit,Kellogg's,true
+BEV-0026,"Iced Tea 14oz",Beverages,817556763913,14.86,19.47,5.8,196,9,135,13,45,pack,PepsiCo,true
+SNA-0027,"Crackers 10oz",Snacks,957157706458,11.43,24.23,8.3,116,40,800,60,200,oz,Philip Morris,true
+TOB-0028,"Classic Rolling Papers 21oz",Tobacco,974993009948,7.11,12.02,1.9,244,17,323,25,68,pack,Mars Inc,true
+HOU-0029,"Air Freshener 49oz",Household,301336110625,11.77,21.07,5.8,262,14,154,21,42,pack,Philip Morris,false
+DAI-0030,"Milk 51oz",Dairy,453463964148,3.91,5.87,6.9,466,16,176,24,64,lb,Philip Morris,true
+FRO-0031,"Ice Cream 18oz",Frozen,319185940431,2.91,6.55,0.2,40,26,312,39,52,can,General Mills,true
+CAN-0032,"Natural Hard Candy 26oz",Candy,924727365662,12.93,24.31,1.8,162,9,45,13,45,pack,Colgate-Palmolive,true
+HEA-0033,"Natural Deodorant 11oz",Health & Beauty,904039841096,2.79,5.61,1.2,26,20,180,30,60,pack,Hershey Company,true
+AUT-0034,"Fresh Air Freshener 11oz",Automotive,174995468901,10.45,21.11,2.4,3,16,224,24,64,liter,Hershey Company,true
+GRO-0035,"Premium Peanut Butter 10oz",Grocery,,9.26,22.13,4.9,0,5,45,7,10,can,Mars Inc,true
+BAK-0036,"Original Muffins 13oz",Bakery,884644983819,6.5,16.12,3.4,439,25,450,37,100,lb,Hershey Company,true
+DEL-0037,"Fresh Wrap 12oz",Deli,600724327182,10.61,25.36,3.8,386,11,154,16,33,bottle,Frito-Lay,false
+PET-0038,"Toys 14oz",Pet Supplies,401525902687,6.15,13.78,7.6,440,14,266,21,70,case,PepsiCo,true
+BEV-0039,"Energy Drink 47oz",Beverages,372301532668,10.55,15.19,5.9,186,29,261,43,116,lb,Coca-Cola Distributor,true
+SNA-0040,"Cheese Puffs 25oz",Snacks,,11.25,22.95,6.6,25,10,120,15,20,can,Kraft Foods,true
+TOB-0041,"Chewing Tobacco 8oz",Tobacco,197582007216,13.47,30.71,3.2,7,11,209,16,55,oz,Coca-Cola Distributor,true
+HOU-0042,"Classic Paper Towels 58oz",Household,659752265546,2.28,5.11,0.1,25,40,400,60,160,gal,PepsiCo,true
+DAI-0043,"Organic Cheese 17oz",Dairy,779465219466,0.91,2.25,9.8,36,11,187,16,55,oz,Mars Inc,true
+FRO-0044,"Classic Breakfast Sandwiches 12oz",Frozen,594431624938,3.77,8.82,3.9,167,22,374,33,88,liter,Hershey Company,true
+CAN-0045,"Licorice 42oz",Candy,542730985813,8.14,17.66,1.4,138,25,325,37,75,case,Colgate-Palmolive,true
+HEA-0046,"Classic Pain Reliever 14oz",Health & Beauty,106113554994,10.61,22.28,9.7,16,8,64,12,32,oz,Hershey Company,true
+AUT-0047,"Car Wash Soap 14oz",Automotive,730626363460,9.75,16.48,8.1,44,5,40,7,15,unit,Hershey Company,true
+GRO-0048,"Cereal 13oz",Grocery,579786783045,11.26,19.37,2.5,92,7,112,10,28,can,Kraft Foods,true
+BAK-0049,"Croissants 52oz",Bakery,583714866799,7.89,11.6,8.2,112,34,646,51,68,liter,,true

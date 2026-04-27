@@ -63,18 +63,22 @@ export async function seedDemoData(storeId: string) {
       .eq('store_id', storeId)
       .eq('name', categoryName)
 
-    if (existingCats && existingCats.length > 0) {
-      categoryMap[categoryName] = existingCats[0].id
+    const typedExistingCats = existingCats as { id: string }[] | null
+
+    if (typedExistingCats && typedExistingCats.length > 0) {
+      categoryMap[categoryName] = typedExistingCats[0].id
     } else {
       // Create new category
-      const { data: newCat, error } = await serviceSupabase
+      const { data: newCat, error } = await (serviceSupabase as any)
         .from('product_categories')
         .insert({ store_id: storeId, name: categoryName })
         .select('id')
         .single()
 
-      if (newCat) {
-        categoryMap[categoryName] = newCat.id
+      const typedNewCat = newCat as { id: string } | null
+
+      if (typedNewCat) {
+        categoryMap[categoryName] = typedNewCat.id
       } else if (error) {
         results.errors.push(`Category ${categoryName}: ${error.message}`)
       }
@@ -105,7 +109,7 @@ export async function seedDemoData(storeId: string) {
     }
 
     // Try to insert first, ignore conflicts (using service client)
-    const { data: insertedProduct, error } = await serviceSupabase
+    const { data: insertedProduct, error } = await (serviceSupabase as any)
       .from('products')
       .insert(productData)
       .select('id')
@@ -136,14 +140,16 @@ export async function seedDemoData(storeId: string) {
     throw new Error(`Failed to query products: ${productsError.message}`)
   }
 
-  if (!products || products.length === 0) {
+  const typedProducts = products as { id: string; sku: string; name: string; selling_price: number; cost_price?: number | null }[] | null
+
+  if (!typedProducts || typedProducts.length === 0) {
     // List what products we tried to create
     const skus = SAMPLE_PRODUCTS.map(p => p.sku).join(', ')
     throw new Error(`No products found for store ${storeId}. Created ${results.productsCreated} products. Tried to create: ${skus}`)
   }
 
-  const productMap: Record<string, typeof products[0]> = {}
-  products.forEach(p => { productMap[p.sku] = p })
+  const productMap: Record<string, typeof typedProducts[0]> = {}
+  typedProducts.forEach(p => { productMap[p.sku] = p })
 
   // Create sample sales
   const salesData = [
@@ -163,7 +169,7 @@ export async function seedDemoData(storeId: string) {
     const transactionDate = new Date(Date.now() - sale.hours_ago * 3600000).toISOString()
     const receiptNumber = `RCP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
-    const { data: receipt, error: receiptError } = await serviceSupabase
+    const { data: receipt, error: receiptError } = await (serviceSupabase as any)
       .from('sales_receipts')
       .insert({
         store_id: storeId,
@@ -190,18 +196,27 @@ export async function seedDemoData(storeId: string) {
         continue
       }
 
-      const lineTotal = product.selling_price * qty
-      const lineTax = lineTotal * 0.0825
+      const typedReceipt = receipt as { id: string } | null
+      if (!typedReceipt) {
+        results.errors.push(`Receipt not found`)
+        continue
+      }
 
-      const { error: lineError } = await serviceSupabase
+      const quantity = qty as number
+      const lineTotal = product.selling_price * quantity
+      const lineTax = lineTotal * 0.0825
+      const lineCost = (product.cost_price || 0) * quantity
+
+      const { error: lineError } = await (serviceSupabase as any)
         .from('sale_line_items')
         .insert({
-          receipt_id: receipt.id,
+          receipt_id: typedReceipt.id,
           product_id: product.id,
           product_name: product.name,
           product_sku: product.sku,
-          quantity: qty,
+          quantity: quantity,
           unit_price: product.selling_price,
+          cost_price: product.cost_price || 0,
           total_amount: lineTotal,
           tax_amount: lineTax,
         })
@@ -222,7 +237,7 @@ export async function seedDemoData(storeId: string) {
   return results
 }
 
-export async function clearDemoData(storeId: string) {
+export async function clearAllStoreData(storeId: string, confirmationCode: string) {
   const supabase = await createServerSupabaseClient()
   const serviceSupabase = createServiceClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -231,16 +246,113 @@ export async function clearDemoData(storeId: string) {
     throw new Error('Not authenticated')
   }
 
-  // Delete sales first (using service client to bypass RLS)
-  await serviceSupabase.from('sale_line_items').delete().eq('store_id', storeId)
-  await serviceSupabase.from('sales_receipts').delete().eq('store_id', storeId)
+  // Verify confirmation code
+  const expectedCode = `DELETE-${storeId.slice(0, 8).toUpperCase()}`
+  if (confirmationCode !== expectedCode) {
+    throw new Error('Invalid confirmation code')
+  }
 
-  // Delete products (using service client)
-  await serviceSupabase.from('products').delete().eq('store_id', storeId)
+  const results = {
+    deleted: {
+      saleLineItems: 0,
+      salesReceipts: 0,
+      products: 0,
+      categories: 0,
+      imports: 0,
+    },
+    errors: [] as string[]
+  }
+
+  try {
+    // First get receipt IDs for this store (to delete line items)
+    const { data: receiptIds } = await serviceSupabase
+      .from('sales_receipts')
+      .select('id')
+      .eq('store_id', storeId)
+
+    const typedReceiptIds = receiptIds as { id: string }[] | null
+    const ids = typedReceiptIds?.map(r => r.id) || []
+
+    // Delete sale line items for these receipts
+    if (ids.length > 0) {
+      const { data: lineItems, error: lineError } = await serviceSupabase
+        .from('sale_line_items')
+        .delete()
+        .in('receipt_id', ids)
+        .select('id')
+
+      if (lineError) {
+        results.errors.push(`sale_line_items: ${lineError.message}`)
+      } else {
+        results.deleted.saleLineItems = lineItems?.length || 0
+      }
+    }
+
+    // Delete sales receipts
+    const { data: receipts, error: receiptsError } = await serviceSupabase
+      .from('sales_receipts')
+      .delete()
+      .eq('store_id', storeId)
+      .select('id')
+
+    if (receiptsError) {
+      results.errors.push(`sales_receipts: ${receiptsError.message}`)
+    } else {
+      results.deleted.salesReceipts = receipts?.length || 0
+    }
+
+    // Delete products
+    const { data: products, error: productsError } = await serviceSupabase
+      .from('products')
+      .delete()
+      .eq('store_id', storeId)
+      .select('id')
+
+    if (productsError) {
+      results.errors.push(`products: ${productsError.message}`)
+    } else {
+      results.deleted.products = products?.length || 0
+    }
+
+    // Delete product categories
+    const { data: categories, error: catError } = await serviceSupabase
+      .from('product_categories')
+      .delete()
+      .eq('store_id', storeId)
+      .select('id')
+
+    if (catError) {
+      results.errors.push(`product_categories: ${catError.message}`)
+    } else {
+      results.deleted.categories = categories?.length || 0
+    }
+
+    // Delete imports
+    const { data: imports, error: importsError } = await serviceSupabase
+      .from('imports')
+      .delete()
+      .eq('store_id', storeId)
+      .select('id')
+
+    if (importsError) {
+      results.errors.push(`imports: ${importsError.message}`)
+    } else {
+      results.deleted.imports = imports?.length || 0
+    }
+
+  } catch (error) {
+    results.errors.push(`Unexpected error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
 
   revalidatePath('/dashboard/products')
   revalidatePath('/dashboard/analytics')
+  revalidatePath('/dashboard/imports')
   revalidatePath('/dashboard/os')
 
-  return { success: true }
+  return { success: results.errors.length === 0, results }
+}
+
+// Keep old function for backwards compatibility
+export async function clearDemoData(storeId: string) {
+  return clearAllStoreData(storeId, `DELETE-${storeId.slice(0, 8).toUpperCase()}`)
 }

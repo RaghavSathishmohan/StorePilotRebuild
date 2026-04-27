@@ -2,6 +2,7 @@
 
 import { createServerSupabaseClient, createServiceClient } from '@/lib/supabase/admin'
 import { checkStorePermission } from '@/lib/permissions'
+import { createClient } from '@/lib/supabase/server'
 
 export async function getStoreAnalytics(storeId: string) {
   const supabase = await createServerSupabaseClient()
@@ -27,7 +28,7 @@ export async function getStoreAnalytics(storeId: string) {
   // Get sales data with line items
   const { data: salesReceipts } = await serviceClient
     .from('sales_receipts')
-    .select('*, sale_line_items(*, products(name, sku, cost_price, category_id))')
+    .select('*, sale_line_items(*)')
     .eq('store_id', storeId)
 
   // Calculate metrics
@@ -82,20 +83,20 @@ export async function getStoreAnalytics(storeId: string) {
     salesByPaymentMethod[paymentMethod] = (salesByPaymentMethod[paymentMethod] || 0) + (receipt.total_amount || 0)
 
     receipt.sale_line_items?.forEach((item: any) => {
-      const revenue = (item.unit_price || 0) * (item.quantity || 0)
-      const cost = (item.cost_price || item.products?.cost_price || 0) * (item.quantity || 0)
+      const revenue = (item.unit_price || 0) * (item.quantity || 0) - (item.discount_amount || 0)
+      const cost = (item.cost_price || 0) * (item.quantity || 0)
 
       totalRevenue += revenue
       totalCost += cost
       totalItemsSold += item.quantity || 0
 
-      // Get category from the product in the line item or from products list
+      // Use product_id to find category, fallback to 'Uncategorized'
       const product = productsList.find(p => p.id === item.product_id)
       const categoryName = product?.product_categories?.name || 'Uncategorized'
       salesByCategory[categoryName] = (salesByCategory[categoryName] || 0) + revenue
 
-      const sku = item.product_sku || item.products?.sku || 'unknown'
-      const name = item.product_name || item.products?.name || 'Unknown'
+      const sku = item.product_sku || 'unknown'
+      const name = item.product_name || 'Unknown'
       if (!productSales[sku]) {
         productSales[sku] = {
           sku,
@@ -128,6 +129,11 @@ export async function getStoreAnalytics(storeId: string) {
     .slice(0, 10)
     .map(p => ({ ...p, profit: p.revenue - p.cost }))
 
+  // Calculate top category correctly from salesByCategory
+  const sortedCategories = Object.entries(salesByCategory).sort((a, b) => b[1] - a[1])
+  const topCategoryName = sortedCategories[0]?.[0] || 'N/A'
+  const topCategoryRevenue = sortedCategories[0]?.[1] || 0
+
   return {
     // Revenue metrics
     totalRevenue,
@@ -159,6 +165,13 @@ export async function getStoreAnalytics(storeId: string) {
     salesByPaymentMethod,
     topSellingProducts,
     topRevenueProducts,
+
+    // Top category info for display
+    topCategory: {
+      name: topCategoryName,
+      revenue: topCategoryRevenue,
+      categoryCount: Object.keys(salesByCategory).length
+    },
 
     // Raw data for detailed views
     products: productsList,
@@ -220,38 +233,46 @@ export async function getCategoryPerformance(storeId: string) {
 
   const serviceClient = createServiceClient()
 
-  // Get categories
+  // Get categories with their products in a single efficient query
   const { data: categories } = await serviceClient
     .from('product_categories')
-    .select('id, name')
+    .select(`
+      id,
+      name,
+      products:products(id, stock, selling_price, cost_price)
+    `)
     .eq('store_id', storeId)
 
-  // Get products with stock
-  const { data: products } = await serviceClient
+  // Get uncategorized products
+  const { data: uncategorizedProducts } = await serviceClient
     .from('products')
-    .select('category_id, stock, selling_price, cost_price')
+    .select('id, stock, selling_price, cost_price')
     .eq('store_id', storeId)
+    .is('category_id', null)
 
-  // Get receipts for this store first
-  const { data: receipts } = await serviceClient
-    .from('sales_receipts')
-    .select('id')
+  // Get sales data with product info using a custom RPC or efficient join
+  // First get all line items with product category info
+  const { data: salesData } = await serviceClient
+    .from('sale_line_items')
+    .select(`
+      quantity,
+      unit_price,
+      cost_price,
+      product_id,
+      receipt:sales_receipts!inner(store_id)
+    `)
+    .eq('receipt.store_id', storeId)
+
+  // Get all products to map category_ids for line items
+  const { data: allProducts } = await serviceClient
+    .from('products')
+    .select('id, category_id')
     .eq('store_id', storeId)
-
-  const receiptIds = (receipts || []).map(r => r.id)
-
-  // Get line items for those receipts
-  let itemsList: any[] = []
-  if (receiptIds.length > 0) {
-    const { data: lineItems } = await serviceClient
-      .from('sale_line_items')
-      .select('quantity, unit_price, product_id, products(category_id)')
-      .in('receipt_id', receiptIds)
-    itemsList = lineItems || []
-  }
 
   const categoriesList = (categories || []) as any[]
-  const productsList = (products || []) as any[]
+  const productsMap = new Map(((allProducts || []) as { id: string; category_id: string | null }[]).map(p => [p.id, p.category_id]))
+  const salesItems = (salesData || []) as any[]
+  const uncategorizedList = (uncategorizedProducts || []) as any[]
 
   const categoryStats: Record<string, {
     name: string
@@ -281,28 +302,101 @@ export async function getCategoryPerformance(storeId: string) {
     itemsSold: 0,
   }
 
-  // Count products and inventory
-  productsList.forEach(product => {
-    const catId = product.category_id || 'uncategorized'
-    if (categoryStats[catId]) {
-      categoryStats[catId].productCount++
+  // Count products and inventory from category data
+  categoriesList.forEach(cat => {
+    const products = cat.products || []
+    products.forEach((product: any) => {
+      categoryStats[cat.id].productCount++
       const qty = product.stock || 0
-      categoryStats[catId].inventoryValue += qty * (product.selling_price || 0)
-    }
+      categoryStats[cat.id].inventoryValue += qty * (product.selling_price || 0)
+    })
   })
 
-  // Count sales
-  itemsList.forEach(item => {
-    const catId = item.products?.category_id || item.product_id ? 'uncategorized' : 'uncategorized'
-    // Try to get category from the joined products data
-    const actualCatId = item.products?.category_id || 'uncategorized'
-    if (categoryStats[actualCatId]) {
-      categoryStats[actualCatId].itemsSold += item.quantity || 0
-      categoryStats[actualCatId].salesRevenue += (item.unit_price || 0) * (item.quantity || 0)
-    }
+  // Add uncategorized products
+  uncategorizedList.forEach(product => {
+    categoryStats['uncategorized'].productCount++
+    const qty = product.stock || 0
+    categoryStats['uncategorized'].inventoryValue += qty * (product.selling_price || 0)
+  })
+
+  // Count sales - properly categorize by product's category
+  salesItems.forEach(item => {
+    const categoryId = productsMap.get(item.product_id) || 'uncategorized'
+    const catKey = categoryStats[categoryId] ? categoryId : 'uncategorized'
+
+    categoryStats[catKey].itemsSold += item.quantity || 0
+    categoryStats[catKey].salesRevenue += (item.unit_price || 0) * (item.quantity || 0)
   })
 
   return Object.values(categoryStats)
     .filter(cat => cat.productCount > 0 || cat.itemsSold > 0)
     .sort((a, b) => b.salesRevenue - a.salesRevenue)
+}
+
+// ============================================
+// DASHBOARD STATS
+// ============================================
+
+export async function getDashboardStats() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    return {
+      teamMemberCount: 0,
+      totalRevenue: 0,
+      storeCount: 0,
+      locationCount: 0,
+    }
+  }
+
+  // Get all stores the user has access to
+  const { data: stores } = await supabase
+    .from('stores')
+    .select('id')
+    .eq('store_members.user_id', user.id)
+    .eq('status', 'active')
+
+  const typedStores = stores as { id: string }[] | null
+  const storeIds = typedStores?.map(s => s.id) || []
+
+  if (storeIds.length === 0) {
+    return {
+      teamMemberCount: 0,
+      totalRevenue: 0,
+      storeCount: 0,
+      locationCount: 0,
+    }
+  }
+
+  // Get total team member count across all stores
+  const { data: members } = await supabase
+    .from('store_members')
+    .select('id')
+    .in('store_id', storeIds)
+    .eq('status', 'active')
+
+  // Get location count
+  const { data: locations } = await supabase
+    .from('store_locations')
+    .select('id')
+    .in('store_id', storeIds)
+    .eq('status', 'active')
+
+  // Get total revenue across all stores using sales_receipts
+  const serviceClient = createServiceClient()
+  const { data: receipts } = await serviceClient
+    .from('sales_receipts')
+    .select('total_amount')
+    .in('store_id', storeIds)
+
+  const receiptsList = (receipts || []) as { total_amount: number }[]
+  const totalRevenue = receiptsList.reduce((sum, r) => sum + (r.total_amount || 0), 0)
+
+  return {
+    teamMemberCount: members?.length || 0,
+    totalRevenue,
+    storeCount: storeIds.length,
+    locationCount: locations?.length || 0,
+  }
 }

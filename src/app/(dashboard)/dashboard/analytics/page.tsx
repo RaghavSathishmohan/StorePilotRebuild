@@ -50,6 +50,7 @@ interface AnalyticsData {
   salesByPaymentMethod: Record<string, number>
   topSellingProducts: { sku: string; name: string; quantity: number; revenue: number; profit: number }[]
   topRevenueProducts: { sku: string; name: string; quantity: number; revenue: number; profit: number }[]
+  topCategory: { name: string; revenue: number; categoryCount: number }
   products: any[]
   sales: any[]
 }
@@ -250,8 +251,8 @@ export default function AnalyticsPage() {
         {/* Category Performance Card */}
         <Flashcard
           title="Top Category"
-          value={Object.entries(analytics.salesByCategory).sort((a, b) => b[1] - a[1])[0]?.[0] || 'N/A'}
-          subtitle={`${Object.keys(analytics.salesByCategory).length} categories`}
+          value={analytics.topCategory?.name || 'N/A'}
+          subtitle={`${analytics.topCategory?.categoryCount || 0} categories • ${formatCurrency(analytics.topCategory?.revenue || 0)}`}
           icon={<BarChart3 className="h-6 w-6 text-rose-600" />}
           color="bg-rose-100"
           onClick={() => toggleCard('categories')}

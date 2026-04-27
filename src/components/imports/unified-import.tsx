@@ -323,11 +323,11 @@ export function UnifiedImport({ storeId }: UnifiedImportProps) {
             <CardContent className="space-y-6">
               {previewData && (
                 <>
-                  <div className="grid grid-cols-4 gap-4">
-                    <div className="bg-muted p-4 rounded-lg text-center">
-                      <p className="text-2xl font-bold">{previewData.totalRows}</p>
-                      <p className="text-xs text-muted-foreground">Total Rows</p>
-                    </div>
+                  <div className="bg-muted/50 p-3 rounded-lg text-sm text-muted-foreground">
+                    Validated all {previewData.totalRows} rows.
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-4">
                     <div className="bg-green-50 p-4 rounded-lg text-center">
                       <p className="text-2xl font-bold text-green-600">{previewData.validRows}</p>
                       <p className="text-xs text-green-700">Valid</p>
@@ -336,9 +336,9 @@ export function UnifiedImport({ storeId }: UnifiedImportProps) {
                       <p className="text-2xl font-bold text-red-600">{previewData.invalidRows}</p>
                       <p className="text-xs text-red-700">Invalid</p>
                     </div>
-                    <div className="bg-blue-50 p-4 rounded-lg text-center">
-                      <p className="text-2xl font-bold text-blue-600">{previewData.previewRows}</p>
-                      <p className="text-xs text-blue-700">Previewed</p>
+                    <div className="bg-muted p-4 rounded-lg text-center">
+                      <p className="text-2xl font-bold">{previewData.totalRows}</p>
+                      <p className="text-xs text-muted-foreground">Total Rows</p>
                     </div>
                   </div>
 

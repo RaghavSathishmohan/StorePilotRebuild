@@ -28,12 +28,14 @@ export async function checkStorePermission(
     .eq('status', 'active')
     .single();
 
-  if (!membership) {
+  const typedMembership = membership as { role: 'owner' | 'admin' | 'manager' | 'staff' } | null
+
+  if (!typedMembership) {
     return { allowed: false, error: 'You are not a member of this store' };
   }
 
   const roleHierarchy = { owner: 4, admin: 3, manager: 2, staff: 1 };
-  const userRoleLevel = roleHierarchy[membership.role as keyof typeof roleHierarchy] || 0;
+  const userRoleLevel = roleHierarchy[typedMembership.role as keyof typeof roleHierarchy] || 0;
   const requiredLevel = roleHierarchy[requiredRole] || 0;
 
   if (userRoleLevel < requiredLevel) {

@@ -20,13 +20,25 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { SeedDataButton } from '@/components/os/seed-data-button'
+import { ClearDataButton } from '@/components/os/clear-data-button'
 
 export const metadata = {
   title: 'Product Command Center | StorePilot',
   description: 'Build, test, and ship with confidence',
 }
 
-async function getTestResults() {
+interface TestResult {
+  id: string;
+  test_name: string;
+  test_type: string;
+  related_feature: string;
+  status: 'passed' | 'failed' | 'pending';
+  duration_ms: number | null;
+  screenshot_url: string | null;
+  run_at: string;
+}
+
+async function getTestResults(): Promise<TestResult[]> {
   const supabase = await createServerSupabaseClient()
 
   const { data: results } = await supabase
@@ -35,10 +47,23 @@ async function getTestResults() {
     .order('run_at', { ascending: false })
     .limit(20)
 
-  return results || []
+  return (results || []) as TestResult[]
 }
 
-async function getAnalyticsInsights() {
+interface AnalyticsInsight {
+  id: string;
+  insight_type: string;
+  title: string;
+  description: string;
+  severity: 'critical' | 'warning' | 'info';
+  product_name: string | null;
+  metric_value: number | null;
+  metric_unit: string | null;
+  action_recommended: string | null;
+  created_at: string;
+}
+
+async function getAnalyticsInsights(): Promise<AnalyticsInsight[]> {
   const supabase = await createServerSupabaseClient()
 
   const { data: insights } = await supabase
@@ -47,10 +72,19 @@ async function getAnalyticsInsights() {
     .order('created_at', { ascending: false })
     .limit(10)
 
-  return insights || []
+  return (insights || []) as AnalyticsInsight[]
 }
 
-async function getAgentActivity() {
+interface AgentActivity {
+  id: string;
+  agent_name: string;
+  action_type: string;
+  status: string;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+async function getAgentActivity(): Promise<AgentActivity[]> {
   const supabase = await createServerSupabaseClient()
 
   const { data: activity } = await supabase
@@ -59,10 +93,19 @@ async function getAgentActivity() {
     .order('created_at', { ascending: false })
     .limit(20)
 
-  return activity || []
+  return (activity || []) as AgentActivity[]
 }
 
-async function getDecisionQueue() {
+interface DecisionQueueItem {
+  id: string;
+  title: string;
+  description: string;
+  priority: 'urgent' | 'high' | 'medium' | 'low';
+  agent_name: string;
+  created_at: string;
+}
+
+async function getDecisionQueue(): Promise<DecisionQueueItem[]> {
   const supabase = await createServerSupabaseClient()
 
   const { data: queue } = await supabase
@@ -73,10 +116,21 @@ async function getDecisionQueue() {
     .order('created_at', { ascending: false })
     .limit(10)
 
-  return queue || []
+  return (queue || []) as DecisionQueueItem[]
 }
 
-async function getUserStores(userId: string) {
+interface UserStore {
+  id: string;
+  name: string;
+  slug: string;
+  owner_id: string;
+  description: string | null;
+  status: 'active' | 'inactive';
+  created_at: string;
+  updated_at: string;
+}
+
+async function getUserStores(userId: string): Promise<UserStore[]> {
   const supabase = await createServerSupabaseClient()
 
   // Get stores the user has access to via store_members join
@@ -90,7 +144,7 @@ async function getUserStores(userId: string) {
     .eq('status', 'active')
     .order('created_at', { ascending: true })
 
-  return stores || []
+  return (stores || []) as UserStore[]
 }
 
 export default async function OSDashboardPage() {
@@ -193,6 +247,9 @@ export default async function OSDashboardPage() {
 
       {/* Demo Data Section */}
       <SeedDataButton storeId={storeId} />
+
+      {/* Clear Data Section */}
+      <ClearDataButton storeId={storeId} />
 
       <Tabs defaultValue="tests" className="space-y-4">
         <TabsList>

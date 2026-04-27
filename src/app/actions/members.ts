@@ -7,8 +7,40 @@ import { inviteMemberSchema, updateMemberRoleSchema } from '@/lib/validations/me
 import type { InviteMemberInput, UpdateMemberRoleInput } from '@/lib/validations/member';
 import type { ActionResponse } from './auth';
 import { randomBytes } from 'crypto';
+import { sendInvitationEmail } from '@/lib/email';
 
-export async function getStoreMembers(storeId: string) {
+interface StoreMember {
+  id: string;
+  store_id: string;
+  user_id: string;
+  role: 'owner' | 'admin' | 'manager' | 'staff';
+  status: 'active' | 'pending';
+  invited_by: string | null;
+  created_at: string;
+  updated_at: string;
+  profiles?: {
+    id: string;
+    full_name: string | null;
+    email: string;
+    avatar_url: string | null;
+  } | null;
+}
+
+interface Invitation {
+  id: string;
+  store_id: string;
+  email: string;
+  role: 'admin' | 'manager' | 'staff';
+  token: string;
+  status: 'pending' | 'accepted' | 'expired';
+  expires_at: string;
+  invited_by: string;
+  accepted_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getStoreMembers(storeId: string): Promise<StoreMember[]> {
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -28,7 +60,7 @@ export async function getStoreMembers(storeId: string) {
     return [];
   }
 
-  return members || [];
+  return (members || []) as StoreMember[];
 }
 
 export async function inviteMember(storeId: string, formData: InviteMemberInput): Promise<ActionResponse> {
@@ -52,9 +84,20 @@ export async function inviteMember(storeId: string, formData: InviteMemberInput)
     .eq('user_id', user.id)
     .single();
 
-  if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
+  const typedMembership = membership as { role: 'owner' | 'admin' | 'manager' | 'staff' } | null
+
+  if (!typedMembership || (typedMembership.role !== 'owner' && typedMembership.role !== 'admin')) {
     return { success: false, error: 'Insufficient permissions' };
   }
+
+  // Get inviter profile and store name for the email
+  const [{ data: inviterProfile }, { data: store }] = await Promise.all([
+    supabase.from('profiles').select('full_name').eq('id', user.id).single(),
+    supabase.from('stores').select('name').eq('id', storeId).single(),
+  ]);
+
+  const typedInviterProfile = inviterProfile as { full_name: string | null } | null
+  const typedStore = store as { name: string } | null
 
   // Check if user already exists
   const { data: existingUser } = await supabase
@@ -63,13 +106,15 @@ export async function inviteMember(storeId: string, formData: InviteMemberInput)
     .eq('email', validated.data.email)
     .single();
 
-  if (existingUser) {
+  const typedExistingUser = existingUser as { id: string } | null
+
+  if (typedExistingUser) {
     // Check if already a member
     const { data: existingMember } = await supabase
       .from('store_members')
       .select('id')
       .eq('store_id', storeId)
-      .eq('user_id', existingUser.id)
+      .eq('user_id', typedExistingUser.id)
       .single();
 
     if (existingMember) {
@@ -95,7 +140,7 @@ export async function inviteMember(storeId: string, formData: InviteMemberInput)
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 7); // 7 days expiration
 
-  const { data: invitation, error } = await supabase
+  const { data: invitation, error } = await (supabase as any)
     .from('invitations')
     .insert({
       store_id: storeId,
@@ -113,14 +158,39 @@ export async function inviteMember(storeId: string, formData: InviteMemberInput)
     return { success: false, error: 'Failed to send invitation' };
   }
 
-  // TODO: Send email with invitation link
-  // await sendInvitationEmail(validated.data.email, token, storeId);
+  // Send invitation email
+  const emailResult = await sendInvitationEmail({
+    to: validated.data.email,
+    inviterName: typedInviterProfile?.full_name || 'Someone',
+    storeName: typedStore?.name || 'a store',
+    role: validated.data.role,
+    token,
+  });
+
+  if (!emailResult.success) {
+    console.error('Failed to send invitation email:', emailResult.error);
+    // Return warning but invitation is still created
+    revalidatePath(`/dashboard/stores/${storeId}/members`);
+    return {
+      success: true,
+      data: invitation,
+      warning: `Invitation created but email failed: ${emailResult.error}`,
+    };
+  }
 
   revalidatePath(`/dashboard/stores/${storeId}/members`);
   return { success: true, data: invitation };
 }
 
-export async function getPendingInvitations(storeId: string) {
+interface InvitationWithProfile extends Invitation {
+  invited_by_profiles?: {
+    id: string;
+    full_name: string | null;
+    email: string;
+  } | null;
+}
+
+export async function getPendingInvitations(storeId: string): Promise<InvitationWithProfile[]> {
   const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
@@ -159,7 +229,9 @@ export async function cancelInvitation(invitationId: string): Promise<ActionResp
     .eq('id', invitationId)
     .single();
 
-  if (!invitation) {
+  const typedInvitation = invitation as { store_id: string } | null
+
+  if (!typedInvitation) {
     return { success: false, error: 'Invitation not found' };
   }
 
@@ -167,15 +239,17 @@ export async function cancelInvitation(invitationId: string): Promise<ActionResp
   const { data: membership } = await supabase
     .from('store_members')
     .select('role')
-    .eq('store_id', invitation.store_id)
+    .eq('store_id', typedInvitation.store_id)
     .eq('user_id', user.id)
     .single();
 
-  if (!membership || (membership.role !== 'owner' && membership.role !== 'admin')) {
+  const typedMembership = membership as { role: 'owner' | 'admin' | 'manager' | 'staff' } | null
+
+  if (!typedMembership || (typedMembership.role !== 'owner' && typedMembership.role !== 'admin')) {
     return { success: false, error: 'Insufficient permissions' };
   }
 
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from('invitations')
     .update({ status: 'expired' })
     .eq('id', invitationId);
@@ -185,7 +259,7 @@ export async function cancelInvitation(invitationId: string): Promise<ActionResp
     return { success: false, error: 'Failed to cancel invitation' };
   }
 
-  revalidatePath(`/dashboard/stores/${invitation.store_id}/members`);
+  revalidatePath(`/dashboard/stores/${typedInvitation.store_id}/members`);
   return { success: true, data: { message: 'Invitation canceled' } };
 }
 
@@ -209,12 +283,14 @@ export async function updateMemberRole(memberId: string, formData: UpdateMemberR
     .eq('id', memberId)
     .single();
 
-  if (!member) {
+  const typedMember = member as { store_id: string; user_id: string; role: 'owner' | 'admin' | 'manager' | 'staff' } | null
+
+  if (!typedMember) {
     return { success: false, error: 'Member not found' };
   }
 
   // Cannot modify owners
-  if (member.role === 'owner') {
+  if (typedMember.role === 'owner') {
     return { success: false, error: 'Cannot modify the owner\'s role' };
   }
 
@@ -222,21 +298,23 @@ export async function updateMemberRole(memberId: string, formData: UpdateMemberR
   const { data: membership } = await supabase
     .from('store_members')
     .select('role')
-    .eq('store_id', member.store_id)
+    .eq('store_id', typedMember.store_id)
     .eq('user_id', user.id)
     .single();
 
+  const typedMembership = membership as { role: 'owner' | 'admin' | 'manager' | 'staff' } | null
+
   // Only owner can assign admin role
-  if (validated.data.role === 'admin' && membership?.role !== 'owner') {
+  if (validated.data.role === 'admin' && typedMembership?.role !== 'owner') {
     return { success: false, error: 'Only the owner can assign admin roles' };
   }
 
   // Admin can manage non-owners
-  if (membership?.role !== 'owner' && membership?.role !== 'admin') {
+  if (typedMembership?.role !== 'owner' && typedMembership?.role !== 'admin') {
     return { success: false, error: 'Insufficient permissions' };
   }
 
-  const { data: updatedMember, error } = await supabase
+  const { data: updatedMember, error } = await (supabase as any)
     .from('store_members')
     .update({ role: validated.data.role })
     .eq('id', memberId)
@@ -248,7 +326,7 @@ export async function updateMemberRole(memberId: string, formData: UpdateMemberR
     return { success: false, error: 'Failed to update role' };
   }
 
-  revalidatePath(`/dashboard/stores/${member.store_id}/members`);
+  revalidatePath(`/dashboard/stores/${typedMember.store_id}/members`);
   return { success: true, data: updatedMember };
 }
 
@@ -267,12 +345,14 @@ export async function removeMember(memberId: string): Promise<ActionResponse> {
     .eq('id', memberId)
     .single();
 
-  if (!member) {
+  const typedMember = member as { store_id: string; user_id: string; role: 'owner' | 'admin' | 'manager' | 'staff' } | null
+
+  if (!typedMember) {
     return { success: false, error: 'Member not found' };
   }
 
   // Cannot remove owner
-  if (member.role === 'owner') {
+  if (typedMember.role === 'owner') {
     return { success: false, error: 'Cannot remove the store owner' };
   }
 
@@ -280,26 +360,28 @@ export async function removeMember(memberId: string): Promise<ActionResponse> {
   const { data: membership } = await supabase
     .from('store_members')
     .select('role')
-    .eq('store_id', member.store_id)
+    .eq('store_id', typedMember.store_id)
     .eq('user_id', user.id)
     .single();
 
+  const typedMembership = membership as { role: 'owner' | 'admin' | 'manager' | 'staff' } | null
+
   // Cannot remove yourself
-  if (member.user_id === user.id) {
+  if (typedMember.user_id === user.id) {
     return { success: false, error: 'You cannot remove yourself' };
   }
 
   // Admin cannot remove other admins
-  if (member.role === 'admin' && membership?.role !== 'owner') {
+  if (typedMember.role === 'admin' && typedMembership?.role !== 'owner') {
     return { success: false, error: 'Only the owner can remove admins' };
   }
 
   // Admin+ can remove members
-  if (membership?.role !== 'owner' && membership?.role !== 'admin') {
+  if (typedMembership?.role !== 'owner' && typedMembership?.role !== 'admin') {
     return { success: false, error: 'Insufficient permissions' };
   }
 
-  const { error } = await supabase
+  const { error } = await (supabase as any)
     .from('store_members')
     .update({ status: 'inactive' })
     .eq('id', memberId);
@@ -309,7 +391,7 @@ export async function removeMember(memberId: string): Promise<ActionResponse> {
     return { success: false, error: 'Failed to remove member' };
   }
 
-  revalidatePath(`/dashboard/stores/${member.store_id}/members`);
+  revalidatePath(`/dashboard/stores/${typedMember.store_id}/members`);
   return { success: true, data: { message: 'Member removed successfully' } };
 }
 
@@ -330,7 +412,9 @@ export async function acceptInvitation(token: string): Promise<ActionResponse> {
     .gt('expires_at', new Date().toISOString())
     .single();
 
-  if (!invitation) {
+  const typedInvitation = invitation as { id: string; store_id: string; role: 'admin' | 'manager' | 'staff' } | null
+
+  if (!typedInvitation) {
     return { success: false, error: 'Invalid or expired invitation' };
   }
 
@@ -338,27 +422,27 @@ export async function acceptInvitation(token: string): Promise<ActionResponse> {
   const { data: existingMember } = await supabase
     .from('store_members')
     .select('id')
-    .eq('store_id', invitation.store_id)
+    .eq('store_id', typedInvitation.store_id)
     .eq('user_id', user.id)
     .single();
 
   if (existingMember) {
     // Update invitation status
-    await supabase
+    await (supabase as any)
       .from('invitations')
       .update({ status: 'accepted', accepted_by: user.id })
-      .eq('id', invitation.id);
+      .eq('id', typedInvitation.id);
 
     redirect('/dashboard');
   }
 
   // Create membership
-  const { error: memberError } = await supabase
+  const { error: memberError } = await (supabase as any)
     .from('store_members')
     .insert({
-      store_id: invitation.store_id,
+      store_id: typedInvitation.store_id,
       user_id: user.id,
-      role: invitation.role,
+      role: typedInvitation.role,
       status: 'active',
     });
 
@@ -368,15 +452,15 @@ export async function acceptInvitation(token: string): Promise<ActionResponse> {
   }
 
   // Update invitation
-  await supabase
+  await (supabase as any)
     .from('invitations')
     .update({ status: 'accepted', accepted_by: user.id })
-    .eq('id', invitation.id);
+    .eq('id', typedInvitation.id);
 
   // Update user's default store
-  await supabase
+  await (supabase as any)
     .from('profiles')
-    .update({ default_store_id: invitation.store_id })
+    .update({ default_store_id: typedInvitation.store_id })
     .eq('id', user.id);
 
   redirect('/dashboard');

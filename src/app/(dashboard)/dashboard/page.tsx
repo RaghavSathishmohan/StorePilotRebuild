@@ -1,11 +1,13 @@
 import { getStores } from '@/app/actions/stores';
+import { getDashboardStats } from '@/app/actions/analytics';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Store, MapPin, Users, TrendingUp } from 'lucide-react';
 
 export default async function DashboardPage() {
   const stores = await getStores();
-  const storeCount = stores.length;
-  const locationCount = stores.reduce((acc, store) => acc + (store.store_locations?.count || 0), 0);
+  const stats = await getDashboardStats();
+  const storeCount = stats.storeCount;
+  const locationCount = stats.locationCount;
 
   return (
     <div className="space-y-6">
@@ -49,9 +51,9 @@ export default async function DashboardPage() {
             <Users className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">-</div>
+            <div className="text-2xl font-bold">{stats.teamMemberCount}</div>
             <p className="text-xs text-muted-foreground">
-              Coming soon
+              Across all stores
             </p>
           </CardContent>
         </Card>
@@ -62,9 +64,11 @@ export default async function DashboardPage() {
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">-</div>
+            <div className="text-2xl font-bold">
+              ${stats.totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </div>
             <p className="text-xs text-muted-foreground">
-              Analytics coming soon
+              Total across all stores
             </p>
           </CardContent>
         </Card>
